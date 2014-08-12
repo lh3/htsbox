@@ -89,24 +89,24 @@ static inline void print_allele(const bam_pileup1_t *p, int l_ref, const char *r
 }
 
 typedef struct {
-	int n_a, n_alleles;
+	int n_a, n_alleles, max_del;
 	int tot_dp, max_dp, n_cnt, max_cnt;
 	allele_t *a;
 	int *cnt_b, *cnt_q;
 	int *sum_q;
 } paux_t;
 
-static int count_alleles(paux_t *pa, int n)
+static void count_alleles(paux_t *pa, int n)
 {
 	allele_t *a = pa->a;
 	int i, j;
 	a[0].k = 0;
-	for (i = pa->n_alleles = 1; i < pa->n_a; ++i) {
+	for (i = pa->n_alleles = 1, pa->max_del = 0; i < pa->n_a; ++i) {
 		if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash)
 			++pa->n_alleles;
 		a[i].k = pa->n_alleles - 1;
+		pa->max_del = pa->max_del > -a[i].indel? pa->max_del : -a[i].indel;
 	}
-	if (pa->n_alleles == 0) return 0;
 	// collect per-BAM counts
 	pa->n_cnt = pa->n_alleles * (n + 1);
 	if (pa->n_cnt > pa->max_cnt) {
@@ -124,7 +124,6 @@ static int count_alleles(paux_t *pa, int n)
 		pa->cnt_q[j] += a[i].q;
 		pa->sum_q[a[i].k] += a[i].q;
 	}
-	return pa->n_alleles;
 }
 
 int main_pileup(int argc, char *argv[])
@@ -200,6 +199,13 @@ int main_pileup(int argc, char *argv[])
 	n_plp = (int*)calloc(n, sizeof(int)); // n_plp[i] is the number of covering reads from the i-th BAM
 	plp = (const bam_pileup1_t**)calloc(n, sizeof(const bam_pileup1_t*)); // plp[i] points to the array of covering reads (internal in mplp)
 	memset(&aux, 0, sizeof(paux_t));
+	if (is_vcf) {
+		puts("##fileformat=VCFv4.1");
+		puts("##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">");
+		puts("##FORMAT=<ID=SQ,Number=A,Type=Integer,Description=\"Sum of quality for each allele\">");
+		puts("##FORMAT=<ID=FC,Number=A,Type=Integer,Description=\"Number of supporting reads on the forward strand\">");
+		puts("##FORMAT=<ID=RC,Number=A,Type=Integer,Description=\"Number of supporting reads on the reverse strand\">");
+	}
 	while (bam_mplp_auto(mplp, &tid, &pos, n_plp, plp) > 0) { // come to the next covered position
 		if (pos < beg || pos >= end) continue; // out of range; skip
 		for (i = aux.tot_dp = 0; i < n; ++i) aux.tot_dp += n_plp[i];
@@ -223,7 +229,7 @@ int main_pileup(int argc, char *argv[])
 				printf("\t%d", n_plp[i] - m); // this the depth to output
 			}
 		} else { // print alleles and allele counts
-			int k, r = 15, max_del = 0, a1, a2;
+			int k, r = 15, a1, a2, shift = 0, qual;
 			allele_t *a;
 			if (aux.tot_dp + 1 > aux.max_dp) {
 				aux.max_dp = aux.tot_dp + 1;
@@ -244,7 +250,7 @@ int main_pileup(int argc, char *argv[])
 			if (aux.n_a == 0) continue;
 			// count alleles
 			ks_introsort(allele, aux.n_a, aux.a);
-			if (count_alleles(&aux, n) == 0) continue;
+			count_alleles(&aux, n);
 			// squeeze out weak alleles
 			if (min_sum_q > 0) {
 				for (i = k = 0; i < aux.n_a; ++i)
@@ -252,51 +258,55 @@ int main_pileup(int argc, char *argv[])
 						a[k++] = a[i];
 				if (k < aux.n_a) {
 					aux.n_a = k;
-					if (count_alleles(&aux, n) == 0) continue;
+					count_alleles(&aux, n);
 				}
 				if (aux.n_alleles == 1 && a[0].hash>>63 == 0) continue;
 			}
 			// identify alleles
-			if (aux.n_alleles > 2) {
+			if (aux.n_alleles >= 2) {
 				int max1 = -1, max2 = -1;
 				for (i = 0; i < aux.n_alleles; ++i)
 					if (aux.sum_q[i] > max1) max2 = max1, a2 = a1, max1 = aux.sum_q[i], a1 = i;
 					else if (aux.sum_q[i] > max2) max2 = aux.sum_q[i], a2 = i;
-			} else if (aux.n_alleles == 2) a1 = 0, a2 = 1;
-			else a1 = a2 = 0;
+				qual = (a1 == 0 && a[0].hash>>63 == 0)? max2 : max1;
+			} else a1 = a2 = 0, qual = aux.sum_q[0];
 			// print
 			fputs(h->target_name[tid], stdout); printf("\t%d", pos+1); // a customized printf() would be faster
 			if (is_vcf) {
 				fputs("\t.\t", stdout);
-				for (i = 0; i <= max_del; ++i)
+				for (i = 0; i <= aux.max_del; ++i)
 					putchar(ref && pos + i < l_ref + beg? ref[pos + i - beg] : 'N');
 				putchar('\t');
 			} else printf("\t%c\t", ref && pos < l_ref + beg? ref[pos - beg] : 'N');
 			// print alleles
 			if (!is_vcf || a[0].hash>>63) {
-				print_allele(&plp[a[0].pos>>32][(uint32_t)a[0].pos], l_ref, ref, pos - beg, max_del, is_vcf);
+				print_allele(&plp[a[0].pos>>32][(uint32_t)a[0].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf);
 				if (aux.n_alleles > 1) putchar(',');
 			}
 			for (i = k = 1; i < aux.n_a; ++i)
 				if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash) {
-					print_allele(&plp[a[i].pos>>32][(uint32_t)a[i].pos], l_ref, ref, pos - beg, max_del, is_vcf);
+					print_allele(&plp[a[i].pos>>32][(uint32_t)a[i].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf);
 					++k;
 					if (k != aux.n_alleles) putchar(',');
 				}
-			if (is_vcf) printf("\t0");
+			if (is_vcf) printf("\t%d\t.\t.\tGT:SQ:FC:RC", qual);
 			// print counts
+			shift = (is_vcf && a[0].hash>>63);
 			for (i = k = 0; i < n; ++i, k += aux.n_alleles) {
-				printf("\t%d/%d:", a1, a2);
+				printf("\t%d/%d:", a1 + shift, a2 + shift);
+				if (shift) fputs("0,", stdout);
 				for (j = 0; j < aux.n_alleles; ++j) {
 					if (j) putchar(',');
 					printf("%d", aux.cnt_q[k+j]);
 				}
 				putchar(':');
+				if (shift) fputs("0,", stdout);
 				for (j = 0; j < aux.n_alleles; ++j) {
 					if (j) putchar(',');
 					printf("%d", aux.cnt_b[(k+j)<<1]);
 				}
 				putchar(':');
+				if (shift) fputs("0,", stdout);
 				for (j = 0; j < aux.n_alleles; ++j) {
 					if (j) putchar(',');
 					printf("%d", aux.cnt_b[(k+j)<<1|1]);
