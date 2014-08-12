@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include "sam.h"
@@ -101,7 +102,7 @@ static void count_alleles(paux_t *pa, int n)
 	allele_t *a = pa->a;
 	int i, j;
 	a[0].k = 0; // the first allele is given allele id 0
-	for (i = pa->n_alleles = 1, pa->max_del = 0; i < pa->n_a; ++i) {
+	for (i = pa->n_alleles = 1, pa->max_del = -a[0].indel; i < pa->n_a; ++i) {
 		if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash) // change of allele
 			++pa->n_alleles;
 		a[i].k = pa->n_alleles - 1;
@@ -232,7 +233,7 @@ int main_pileup(int argc, char *argv[])
 				printf("\t%d", n_plp[i] - m); // this the depth to output
 			}
 		} else { // detailed summary of each allele
-			int k, r = 15, a1, a2, shift = 0, qual;
+			int k, r = 15, a1, a2 = -1, shift = 0, qual;
 			allele_t *a;
 			if (aux.tot_dp + 1 > aux.max_dp) { // expand array
 				aux.max_dp = aux.tot_dp + 1;
@@ -272,6 +273,7 @@ int main_pileup(int argc, char *argv[])
 					else if (aux.sum_q[i] > max2) max2 = aux.sum_q[i], a2 = i;
 				qual = (a1 == 0 && a[0].hash>>63 == 0)? max2 : max1;
 			} else a1 = a2 = 0, qual = aux.sum_q[0];
+			assert(a2 >= 0);
 			// print
 			fputs(h->target_name[tid], stdout); printf("\t%d", pos+1);
 			if (is_vcf) {
