@@ -23,7 +23,16 @@ static int read_bam(void *data, bam1_t *b) // read level filters better go here 
 	int ret = aux->itr? bam_itr_next(aux->fp, aux->itr, b) : bam_read1(aux->fp, b);
 	if (!(b->core.flag&BAM_FUNMAP)) {
 		if ((int)b->core.qual < aux->min_mapQ) b->core.flag |= BAM_FUNMAP;
-		else if (aux->min_len && bam_cigar2qlen(b->core.n_cigar, bam_get_cigar(b)) < aux->min_len) b->core.flag |= BAM_FUNMAP;
+		else if (aux->min_len > 0) {
+			int k, l;
+			const uint32_t *cigar = bam_get_cigar(b);
+			for (k = l = 0; k < b->core.n_cigar; ++k) {
+				int op = bam_cigar_op(cigar[k]);
+				if ((bam_cigar_type(op)&1) && op != BAM_CSOFT_CLIP)
+					l += bam_cigar_oplen(cigar[k]);
+			}
+			if (l < aux->min_len) b->core.flag |= BAM_FUNMAP;
+		}
 	}
 	return ret;
 }
@@ -213,7 +222,7 @@ int main_pileup(int argc, char *argv[])
 					print_allele(&plp[a[i].pos>>32][(uint32_t)a[i].pos], l_ref, ref, pos - beg);
 					++n_alleles;
 				}
-			// collection per-BAM counts
+			// collect per-BAM counts
 			aux.n_cnt = n_alleles * n;
 			if (aux.n_cnt > aux.max_cnt) {
 				aux.max_cnt = aux.n_cnt;
