@@ -38,7 +38,7 @@ static int read_bam(void *data, bam1_t *b) // read level filters better go here 
 }
 
 typedef struct {
-	uint32_t is_skip:1, is_rev:1, b:14, q:16;
+	uint32_t is_skip:1, is_rev:1, b:4, q:8, k:18;
 	int indel;
 	uint64_t hash;
 	uint64_t pos;
@@ -89,10 +89,43 @@ static inline void print_allele(const bam_pileup1_t *p, int l_ref, const char *r
 }
 
 typedef struct {
+	int n_a, n_alleles;
 	int tot_dp, max_dp, n_cnt, max_cnt;
 	allele_t *a;
 	int *cnt_b, *cnt_q;
+	int *sum_q;
 } paux_t;
+
+static int count_alleles(paux_t *pa, int n)
+{
+	allele_t *a = pa->a;
+	int i, j;
+	a[0].k = 0;
+	for (i = pa->n_alleles = 1; i < pa->n_a; ++i) {
+		if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash)
+			++pa->n_alleles;
+		a[i].k = pa->n_alleles - 1;
+	}
+	if (pa->n_alleles == 0) return 0;
+	// collect per-BAM counts
+	pa->n_cnt = pa->n_alleles * (n + 1);
+	if (pa->n_cnt > pa->max_cnt) {
+		pa->max_cnt = pa->n_cnt;
+		kroundup32(pa->max_cnt);
+		pa->cnt_b = (int*)realloc(pa->cnt_b, pa->max_cnt * 2 * sizeof(int));
+		pa->cnt_q = (int*)realloc(pa->cnt_q, pa->max_cnt * sizeof(int));
+	}
+	memset(pa->cnt_b, 0, pa->n_cnt * 2 * sizeof(int));
+	memset(pa->cnt_q, 0, pa->n_cnt * sizeof(int));
+	pa->sum_q = pa->cnt_q + pa->n_alleles * n;
+	for (i = 0; i < pa->n_a; ++i) {
+		j = (a[i].pos>>32)*pa->n_alleles + a[i].k;
+		++pa->cnt_b[j<<1|a[i].is_rev];
+		pa->cnt_q[j] += a[i].q;
+		pa->sum_q[a[i].k] += a[i].q;
+	}
+	return pa->n_alleles;
+}
 
 int main_pileup(int argc, char *argv[])
 {
@@ -190,7 +223,7 @@ int main_pileup(int argc, char *argv[])
 				printf("\t%d", n_plp[i] - m); // this the depth to output
 			}
 		} else { // print alleles and allele counts
-			int m, n_alleles, k, r = 15, alt_sum_q = 0, max_del = 0, has_ref_allele = 0;
+			int k, r = 15, max_del = 0, a1, a2;
 			allele_t *a;
 			if (aux.tot_dp + 1 > aux.max_dp) {
 				aux.max_dp = aux.tot_dp + 1;
@@ -200,24 +233,37 @@ int main_pileup(int argc, char *argv[])
 			a = aux.a;
 			// collect alleles
 			r = (ref && pos - beg < l_ref)? seq_nt16_table[(int)ref[pos - beg]] : 15;
-			for (i = m = 0; i < n; ++i) {
+			for (i = aux.n_a = 0; i < n; ++i) {
 				for (j = 0; j < n_plp[i]; ++j) {
-					a[m] = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j, r);
-					if (a[m].is_skip) continue;
-					if (a[m].hash>>63) alt_sum_q += a[m].q;
-					else has_ref_allele = 1;
-					max_del = max_del > -a[m].indel? max_del : -a[m].indel;
-					++m;
+					allele_t aa;
+					aa = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j, r);
+					if (aa.is_skip) continue;
+					a[aux.n_a++] = aa;
 				}
 			}
-			if (m == 0) continue;
-			if (alt_sum_q < min_sum_q) continue;
+			if (aux.n_a == 0) continue;
 			// count alleles
-			ks_introsort(allele, m, aux.a);
-			for (i = n_alleles = 1; i < m; ++i)
-				if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash)
-					++n_alleles;
-			if (n_alleles == 0) continue;
+			ks_introsort(allele, aux.n_a, aux.a);
+			if (count_alleles(&aux, n) == 0) continue;
+			// squeeze out weak alleles
+			if (min_sum_q > 0) {
+				for (i = k = 0; i < aux.n_a; ++i)
+					if (aux.sum_q[a[i].k] >= min_sum_q)
+						a[k++] = a[i];
+				if (k < aux.n_a) {
+					aux.n_a = k;
+					if (count_alleles(&aux, n) == 0) continue;
+				}
+				if (aux.n_alleles == 1 && a[0].hash>>63 == 0) continue;
+			}
+			// identify alleles
+			if (aux.n_alleles > 2) {
+				int max1 = -1, max2 = -1;
+				for (i = 0; i < aux.n_alleles; ++i)
+					if (aux.sum_q[i] > max1) max2 = max1, a2 = a1, max1 = aux.sum_q[i], a1 = i;
+					else if (aux.sum_q[i] > max2) max2 = aux.sum_q[i], a2 = i;
+			} else if (aux.n_alleles == 2) a1 = 0, a2 = 1;
+			else a1 = a2 = 0;
 			// print
 			fputs(h->target_name[tid], stdout); printf("\t%d", pos+1); // a customized printf() would be faster
 			if (is_vcf) {
@@ -229,48 +275,31 @@ int main_pileup(int argc, char *argv[])
 			// print alleles
 			if (!is_vcf || a[0].hash>>63) {
 				print_allele(&plp[a[0].pos>>32][(uint32_t)a[0].pos], l_ref, ref, pos - beg, max_del, is_vcf);
-				if (n_alleles > 1) putchar(',');
+				if (aux.n_alleles > 1) putchar(',');
 			}
-			for (i = k = 1; i < m; ++i)
+			for (i = k = 1; i < aux.n_a; ++i)
 				if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash) {
 					print_allele(&plp[a[i].pos>>32][(uint32_t)a[i].pos], l_ref, ref, pos - beg, max_del, is_vcf);
 					++k;
-					if (k != n_alleles) putchar(',');
+					if (k != aux.n_alleles) putchar(',');
 				}
-			if (is_vcf) printf("\t%d", alt_sum_q);
-			// collect per-BAM counts
-			aux.n_cnt = n_alleles * n;
-			if (aux.n_cnt > aux.max_cnt) {
-				aux.max_cnt = aux.n_cnt;
-				kroundup32(aux.max_cnt);
-				aux.cnt_b = (int*)realloc(aux.cnt_b, aux.max_cnt * 2 * sizeof(int));
-				aux.cnt_q = (int*)realloc(aux.cnt_q, aux.max_cnt * sizeof(int));
-			}
-			memset(aux.cnt_b, 0, aux.n_cnt * 2 * sizeof(int));
-			memset(aux.cnt_q, 0, aux.n_cnt * sizeof(int));
-			j = (a[0].pos>>32)*n_alleles;
-			++aux.cnt_b[j]; aux.cnt_q[j] += a[0].q;
-			for (i = 1, k = 0; i < m; ++i) {
-				if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash) ++k;
-				j = (a[i].pos>>32)*n_alleles + k;
-				++aux.cnt_b[j<<1|a[i].is_rev]; aux.cnt_q[j] += a[i].q;
-			}
+			if (is_vcf) printf("\t0");
 			// print counts
-			for (i = m = 0; i < n; ++i, m += n_alleles) {
-				putchar('\t');
-				for (j = 0; j < n_alleles; ++j) {
+			for (i = k = 0; i < n; ++i, k += aux.n_alleles) {
+				printf("\t%d/%d:", a1, a2);
+				for (j = 0; j < aux.n_alleles; ++j) {
 					if (j) putchar(',');
-					printf("%d", aux.cnt_q[m+j]);
+					printf("%d", aux.cnt_q[k+j]);
 				}
 				putchar(':');
-				for (j = 0; j < n_alleles; ++j) {
+				for (j = 0; j < aux.n_alleles; ++j) {
 					if (j) putchar(',');
-					printf("%d", aux.cnt_b[(m+j)<<1]);
+					printf("%d", aux.cnt_b[(k+j)<<1]);
 				}
 				putchar(':');
-				for (j = 0; j < n_alleles; ++j) {
+				for (j = 0; j < aux.n_alleles; ++j) {
 					if (j) putchar(',');
-					printf("%d", aux.cnt_b[(m+j)<<1|1]);
+					printf("%d", aux.cnt_b[(k+j)<<1|1]);
 				}
 			}
 		}
