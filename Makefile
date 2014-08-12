@@ -4,7 +4,7 @@ DFLAGS=
 OBJS=		main.o samview.o vcfview.o bamidx.o bcfidx.o bamshuf.o bam2fq.o tabix.o \
 			abreak.o bam2bed.o razf.o razip.o faidx.o pileup.o
 INCLUDES=	-Ihtslib
-PROG=		htscmd
+PROG=		htsbox
 
 .SUFFIXES:.c .o
 .PHONY:all lib
@@ -17,7 +17,7 @@ all:$(PROG)
 lib:
 		cd htslib; $(MAKE) CC="$(CC)" CFLAGS="$(CFLAGS)" libhts.a || exit 1; cd ..
 
-htscmd:lib $(OBJS)
+htsbox:lib $(OBJS)
 		$(CC) $(CFLAGS) -o $@ $(OBJS) -Lhtslib -lhts -lpthread -lz -lm
 
 clean:

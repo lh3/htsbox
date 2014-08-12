@@ -20,7 +20,7 @@ int main_razip(int argc, char *argv[]);
 static int usage()
 {
 	fprintf(stderr, "\nVersion: %s\n", HTS_VERSION);
-	fprintf(stderr, "Usage:   htscmd <command> <argument>\n\n");
+	fprintf(stderr, "Usage:   htsbox <command> <argument>\n\n");
 	fprintf(stderr, "Command: samview      SAM<->BAM conversion\n");
 	fprintf(stderr, "         vcfview      VCF<->BCF conversion\n");
 	fprintf(stderr, "         tabix        tabix for BGZF'd BED, GFF, SAM, VCF and more\n");
