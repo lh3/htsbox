@@ -35,10 +35,10 @@ typedef struct {
 	uint64_t pos;
 } allele_t;
 
-#define allele_lt(a, b) ((a).indel < (b).indel || ((a).indel == (b).indel && (a).hash < (b).hash))
+#define allele_lt(a, b) ((a).hash < (b).hash || ((a).hash == (b).hash && (a).indel < (b).indel))
 KSORT_INIT(allele, allele_t, allele_lt)
 
-static inline allele_t pileup2allele(const bam_pileup1_t *p, int min_baseQ, uint64_t pos)
+static inline allele_t pileup2allele(const bam_pileup1_t *p, int min_baseQ, uint64_t pos, int ref)
 {
 	allele_t a;
 	int i;
@@ -52,6 +52,9 @@ static inline allele_t pileup2allele(const bam_pileup1_t *p, int min_baseQ, uint
 	if (p->indel > 0)
 		for (i = 0; i < p->indel; ++i)
 			a.hash = (a.hash<<4) + a.hash + bam_seqi(seq, p->qpos + i + 1);
+	a.hash = a.hash << 1 >> 1;
+	if (p->indel != 0 || a.b != ref || ref == 15)
+		a.hash |= 1ULL<<63;
 	return a;
 }
 
@@ -172,7 +175,7 @@ int main_pileup(int argc, char *argv[])
 				printf("\t%d", n_plp[i] - m); // this the depth to output
 			}
 		} else { // print alleles and allele counts
-			int m = 0, n_alleles, k;
+			int m = 0, n_alleles, k, r = 15, alt_sum_q = 0;
 			allele_t *a;
 			if (aux.tot_dp > aux.max_dp) {
 				aux.max_dp = aux.tot_dp;
@@ -181,25 +184,23 @@ int main_pileup(int argc, char *argv[])
 			}
 			a = aux.a;
 			// collect alleles
-			for (i = 0; i < n; ++i)
+			r = (ref && pos - beg < l_ref)? seq_nt16_table[(int)ref[pos - beg]] : 15;
+			for (i = 0; i < n; ++i) {
 				for (j = 0; j < n_plp[i]; ++j) {
-					a[m] = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j);
-					if (!a[m].is_skip) ++m;
+					a[m] = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j, r);
+					if (a[m].is_skip) continue;
+					if (a[m].hash>>63) alt_sum_q += a[m].q;
+					++m;
 				}
+			}
 			if (m == 0) continue;
-			ks_introsort(allele, m, aux.a);
+			if (alt_sum_q < min_sum_q) continue;
 			// count alleles
+			ks_introsort(allele, m, aux.a);
 			for (i = n_alleles = 1; i < m; ++i)
 				if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash)
 					++n_alleles;
 			if (n_alleles == 0) continue;
-			if (ref && pos - beg < l_ref && min_sum_q > 0) {
-				int r = seq_nt16_table[(int)ref[pos - beg]], sum = 0;
-				for (i = 0; i < m; ++i)
-					if (a[i].indel != 0 || a[i].b != r)
-						sum += a[i].q;
-				if (sum < min_sum_q) continue;
-			}
 			// print
 			fputs(h->target_name[tid], stdout); printf("\t%d", pos+1); // a customized printf() would be faster
 			if (ref == 0 || pos >= l_ref + beg) printf("\tN\t");
