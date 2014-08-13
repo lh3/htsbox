@@ -244,13 +244,11 @@ int main_pileup(int argc, char *argv[])
 			a = aux.a;
 			// collect alleles
 			r = (ref && pos - beg < l_ref)? seq_nt16_table[(int)ref[pos - beg]] : 15; // the reference allele
-			for (i = aux.n_a = 0; i < n; ++i) {
+			for (i = aux.n_a = 0; i < n; ++i)
 				for (j = 0; j < n_plp[i]; ++j) {
-					allele_t aa;
-					aa = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j, r);
-					if (!aa.is_skip) a[aux.n_a++] = aa;
+					a[aux.n_a] = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j, r);
+					if (!a[aux.n_a].is_skip) ++aux.n_a;
 				}
-			}
 			if (aux.n_a == 0) continue; // no reads are good enough; zero effective coverage
 			// count alleles
 			ks_introsort(allele, aux.n_a, aux.a);
@@ -267,14 +265,6 @@ int main_pileup(int argc, char *argv[])
 				}
 			}
 			if (var_only && aux.n_alleles == 1 && a[0].hash>>63 == 0) continue; // var_only mode, but no ALT allele; skip
-			// compute qual
-			if (aux.n_alleles >= 2) {
-				int max1 = -1, max2 = -1, a1 = -1;
-				for (i = 0; i < aux.n_alleles; ++i)
-					if (aux.sum_q[i] > max1) max2 = max1, a1 = i, max1 = aux.sum_q[i];
-					else if (aux.sum_q[i] > max2) max2 = aux.sum_q[i];
-				qual = (a1 == 0 && a[0].hash>>63 == 0)? max2 : max1;
-			} else qual = aux.sum_q[0];
 			// print
 			fputs(h->target_name[tid], stdout); printf("\t%d", pos+1);
 			if (is_vcf) {
@@ -294,6 +284,9 @@ int main_pileup(int argc, char *argv[])
 					if (++k != aux.n_alleles) putchar(',');
 				}
 			if (is_vcf && aux.n_alleles == 1 && a[0].hash>>63 == 0) putchar('.'); // print placeholder if there is only the reference allele
+			// compute and print qual
+			for (i = !(a[0].hash>>63), qual = 0; i < aux.n_alleles; ++i)
+				qual = qual > aux.sum_q[i]? qual : aux.sum_q[i];
 			if (is_vcf) printf("\t%d\t.\t.\tGT:SQ:FC:RC", qual);
 			// print counts
 			shift = (is_vcf && a[0].hash>>63); // in VCF, if there is no ref allele, we need to shift the allele number
@@ -308,9 +301,10 @@ int main_pileup(int argc, char *argv[])
 					if (max1 == 0 || (min_sum_q > 0 && max1 < min_sum_q)) a1 = a2 = -1;
 					else if (max2 == 0 || (min_sum_q > 0 && max2 < min_sum_q)) a2 = a1;
 				} else a1 = a2 = 0;
-				// print genotypes and annotations
+				// print genotypes
 				if (a1 < 0) printf("\t./.:");
 				else printf("\t%d/%d:", a1 + shift, a2 + shift);
+				// print counts
 				if (shift) fputs("0,", stdout);
 				for (j = 0; j < aux.n_alleles; ++j) {
 					if (j) putchar(',');
