@@ -291,16 +291,13 @@ int main_pileup(int argc, char *argv[])
 			// print counts
 			shift = (is_vcf && a[0].hash>>63); // in VCF, if there is no ref allele, we need to shift the allele number
 			for (i = k = 0; i < n; ++i, k += aux.n_alleles) {
-				int a1 = -1, a2 = -1, *sum_q = &aux.cnt_q[k];
+				int max1 = 0, max2 = 0, a1 = -1, a2 = -1, *sum_q = &aux.cnt_q[k];
 				// estimate genotype
-				if (aux.n_alleles >= 2) {
-					int i, max1 = -1, max2 = -1;
-					for (i = 0; i < aux.n_alleles; ++i)
-						if (sum_q[i] > max1) max2 = max1, a2 = a1, max1 = sum_q[i], a1 = i;
-						else if (sum_q[i] > max2) max2 = sum_q[i], a2 = i;
-					if (max1 == 0 || (min_sum_q > 0 && max1 < min_sum_q)) a1 = a2 = -1;
-					else if (max2 == 0 || (min_sum_q > 0 && max2 < min_sum_q)) a2 = a1;
-				} else a1 = a2 = 0;
+				for (j = 0; j < aux.n_alleles; ++j)
+					if (sum_q[j] > max1) max2 = max1, a2 = a1, max1 = sum_q[j], a1 = j;
+					else if (sum_q[j] > max2) max2 = sum_q[j], a2 = j;
+				if (max1 == 0 || (min_sum_q > 0 && max1 < min_sum_q)) a1 = a2 = -1;
+				else if (max2 == 0 || (min_sum_q > 0 && max2 < min_sum_q)) a2 = a1;
 				// print genotypes
 				if (a1 < 0) printf("\t./.:");
 				else printf("\t%d/%d:", a1 + shift, a2 + shift);
