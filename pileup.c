@@ -130,7 +130,8 @@ static void count_alleles(paux_t *pa, int n)
 
 int main_pileup(int argc, char *argv[])
 {
-	int i, j, n, tid, beg, end, pos, last_tid, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, depth_only = 0, min_sum_q = 0, is_vcf = 0, var_only = 0;
+	int i, j, n, tid, beg, end, pos, last_tid, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_sum_q = 0;
+	int depth_only = 0, is_vcf = 0, var_only = 0, show_cnt = 0;
 	const bam_pileup1_t **plp;
 	char *ref = 0, *reg = 0, *chr_end; // specified region
 	faidx_t *fai = 0;
@@ -140,7 +141,7 @@ int main_pileup(int argc, char *argv[])
 	bam_mplp_t mplp;
 
 	// parse the command line
-	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcs:")) >= 0) {
+	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCs:")) >= 0) {
 		if (n == 'f') fai = fai_load(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
 		else if (n == 'r') reg = strdup(optarg);   // parsing a region requires a BAM header
@@ -150,6 +151,7 @@ int main_pileup(int argc, char *argv[])
 		else if (n == 'd') depth_only = 1;
 		else if (n == 'v') var_only = 1;
 		else if (n == 'c') is_vcf = var_only = 1;
+		else if (n == 'C') show_cnt = 1;
 	}
 	if (optind == argc) {
         fprintf(stderr, "\n");
@@ -208,8 +210,10 @@ int main_pileup(int argc, char *argv[])
 		puts("##fileformat=VCFv4.1");
 		puts("##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">");
 		puts("##FORMAT=<ID=SQ,Number=A,Type=Integer,Description=\"Sum of quality for each allele\">");
-		puts("##FORMAT=<ID=FC,Number=A,Type=Integer,Description=\"Number of supporting reads on the forward strand\">");
-		puts("##FORMAT=<ID=RC,Number=A,Type=Integer,Description=\"Number of supporting reads on the reverse strand\">");
+		if (show_cnt) {
+			puts("##FORMAT=<ID=FC,Number=A,Type=Integer,Description=\"Number of supporting reads on the forward strand\">");
+			puts("##FORMAT=<ID=RC,Number=A,Type=Integer,Description=\"Number of supporting reads on the reverse strand\">");
+		}
 	}
 	while (bam_mplp_auto(mplp, &tid, &pos, n_plp, plp) > 0) { // come to the next covered position
 		if (pos < beg || pos >= end) continue; // out of range; skip
@@ -287,7 +291,8 @@ int main_pileup(int argc, char *argv[])
 			// compute and print qual
 			for (i = !(a[0].hash>>63), qual = 0; i < aux.n_alleles; ++i)
 				qual = qual > aux.sum_q[i]? qual : aux.sum_q[i];
-			if (is_vcf) printf("\t%d\t.\t.\tGT:SQ:FC:RC", qual);
+			if (is_vcf) printf("\t%d\t.\t.\tGT:SQ", qual);
+			if (is_vcf && show_cnt) printf(":FC:RC");
 			// print counts
 			shift = (is_vcf && a[0].hash>>63); // in VCF, if there is no ref allele, we need to shift the allele number
 			for (i = k = 0; i < n; ++i, k += aux.n_alleles) {
@@ -307,6 +312,7 @@ int main_pileup(int argc, char *argv[])
 					if (j) putchar(',');
 					printf("%d", aux.cnt_q[k+j]);
 				}
+				if (!show_cnt) continue;
 				putchar(':');
 				if (shift) fputs("0,", stdout);
 				for (j = 0; j < aux.n_alleles; ++j) {
