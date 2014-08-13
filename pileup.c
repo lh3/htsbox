@@ -102,7 +102,8 @@ static void count_alleles(paux_t *pa, int n)
 	allele_t *a = pa->a;
 	int i, j;
 	a[0].k = 0; // the first allele is given allele id 0
-	for (i = pa->n_alleles = 1, pa->max_del = -a[0].indel; i < pa->n_a; ++i) {
+	pa->max_del = a[0].indel < 0? -a[0].indel : 0;
+	for (i = pa->n_alleles = 1; i < pa->n_a; ++i) {
 		if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash) // change of allele
 			++pa->n_alleles;
 		a[i].k = pa->n_alleles - 1;
@@ -233,7 +234,7 @@ int main_pileup(int argc, char *argv[])
 				printf("\t%d", n_plp[i] - m); // this the depth to output
 			}
 		} else { // detailed summary of each allele
-			int k, r = 15, a1, a2 = -1, shift = 0, qual;
+			int k, r = 15, shift = 0, qual;
 			allele_t *a;
 			if (aux.tot_dp + 1 > aux.max_dp) { // expand array
 				aux.max_dp = aux.tot_dp + 1;
@@ -260,20 +261,20 @@ int main_pileup(int argc, char *argv[])
 					if (aux.sum_q[a[i].k] >= min_sum_q)
 						a[k++] = a[i];
 				if (k < aux.n_a) {
+					if (k == 0) continue; // no alleles are good enough
 					aux.n_a = k;
 					count_alleles(&aux, n);
 				}
 			}
 			if (var_only && aux.n_alleles == 1 && a[0].hash>>63 == 0) continue; // var_only mode, but no ALT allele; skip
-			// identify alleles
+			// compute qual
 			if (aux.n_alleles >= 2) {
-				int max1 = -1, max2 = -1;
+				int max1 = -1, max2 = -1, a1 = -1;
 				for (i = 0; i < aux.n_alleles; ++i)
-					if (aux.sum_q[i] > max1) max2 = max1, a2 = a1, max1 = aux.sum_q[i], a1 = i;
-					else if (aux.sum_q[i] > max2) max2 = aux.sum_q[i], a2 = i;
+					if (aux.sum_q[i] > max1) max2 = max1, a1 = i, max1 = aux.sum_q[i];
+					else if (aux.sum_q[i] > max2) max2 = aux.sum_q[i];
 				qual = (a1 == 0 && a[0].hash>>63 == 0)? max2 : max1;
-			} else a1 = a2 = 0, qual = aux.sum_q[0];
-			assert(a2 >= 0);
+			} else qual = aux.sum_q[0];
 			// print
 			fputs(h->target_name[tid], stdout); printf("\t%d", pos+1);
 			if (is_vcf) {
@@ -297,7 +298,19 @@ int main_pileup(int argc, char *argv[])
 			// print counts
 			shift = (is_vcf && a[0].hash>>63); // in VCF, if there is no ref allele, we need to shift the allele number
 			for (i = k = 0; i < n; ++i, k += aux.n_alleles) {
-				printf("\t%d/%d:", a1 + shift, a2 + shift);
+				int a1 = -1, a2 = -1, *sum_q = &aux.cnt_q[k];
+				// estimate genotype
+				if (aux.n_alleles >= 2) {
+					int i, max1 = -1, max2 = -1;
+					for (i = 0; i < aux.n_alleles; ++i)
+						if (sum_q[i] > max1) max2 = max1, a2 = a1, max1 = sum_q[i], a1 = i;
+						else if (sum_q[i] > max2) max2 = sum_q[i], a2 = i;
+					if (max1 == 0 || (min_sum_q > 0 && max1 < min_sum_q)) a1 = a2 = -1;
+					else if (max2 == 0 || (min_sum_q > 0 && max2 < min_sum_q)) a2 = a1;
+				} else a1 = a2 = 0;
+				// print genotypes and annotations
+				if (a1 < 0) printf("\t./.:");
+				else printf("\t%d/%d:", a1 + shift, a2 + shift);
 				if (shift) fputs("0,", stdout);
 				for (j = 0; j < aux.n_alleles; ++j) {
 					if (j) putchar(',');
