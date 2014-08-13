@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <math.h>
 #include "sam.h"
 #include "faidx.h"
 #include "ksort.h"
@@ -95,6 +96,10 @@ typedef struct {
 	allele_t *a; // allele of each read, of size tot_dp
 	int *cnt_b, *cnt_q; // cnt_b: count of supporting reads on both strands; cnt_q: sum of quality
 	int *sum_q; // sum of qual across entire _a_. It points to the last "row" of cnt_q.
+
+	int len, max_len;
+	char *seq;
+	int *depth;
 } paux_t;
 
 static void count_alleles(paux_t *pa, int n)
@@ -128,10 +133,38 @@ static void count_alleles(paux_t *pa, int n)
 	}
 }
 
+static void write_fa(paux_t *a, const char *name, int beg, float max_dev)
+{
+	int i, n_pos, max_dp;
+	uint64_t sum_dp;
+	double avg_dp, max_dp_real;
+	for (i = 0, sum_dp = 0, n_pos = 0; i < a->len; ++i)
+		if (a->seq[i] != 'n' && a->seq[i] != 'N')
+			++n_pos, sum_dp += a->depth[i];
+	avg_dp = (double)sum_dp/n_pos;
+	max_dp_real = avg_dp + max_dev * sqrt(avg_dp);
+	max_dp = max_dp_real > 0x7fffffff? 0x7fffffff : (int)(max_dp_real + .499); // to avoid integer overflow
+	if (max_dp < 255) {
+		for (i = 0; i < a->len; ++i)
+			if (a->depth[i] > max_dp)
+				a->seq[i] = tolower(a->seq[i]);
+	}
+	printf(">%s", name);
+	if (beg > 0) printf(":%d", beg + 1);
+	for (i = 0; i < a->len; ++i) {
+		if (i%60 == 0) putchar('\n');
+		putchar(a->seq[i]);
+	}
+	putchar('\n');
+	fprintf(stderr, "[M::%s] average depth for contig '%s': %.2f\n", __func__, name, avg_dp);
+}
+
 int main_pileup(int argc, char *argv[])
 {
-	int i, j, n, tid, beg, end, pos, last_tid, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_sum_q = 0;
-	int depth_only = 0, is_vcf = 0, var_only = 0, show_cnt = 0;
+	int i, j, n, tid, beg, end, pos, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_sum_q = 0;
+	int depth_only = 0, is_vcf = 0, var_only = 0, show_cnt = 0, is_fa = 0;
+	int last_tid, last_pos;
+	float max_dev = 3.0;
 	const bam_pileup1_t **plp;
 	char *ref = 0, *reg = 0, *chr_end; // specified region
 	faidx_t *fai = 0;
@@ -141,7 +174,7 @@ int main_pileup(int argc, char *argv[])
 	bam_mplp_t mplp;
 
 	// parse the command line
-	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCs:")) >= 0) {
+	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCFs:D:")) >= 0) {
 		if (n == 'f') fai = fai_load(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
 		else if (n == 'r') reg = strdup(optarg);   // parsing a region requires a BAM header
@@ -152,6 +185,19 @@ int main_pileup(int argc, char *argv[])
 		else if (n == 'v') var_only = 1;
 		else if (n == 'c') is_vcf = var_only = 1;
 		else if (n == 'C') show_cnt = 1;
+		else if (n == 'D') max_dev = atof(optarg), is_fa = 1;
+		else if (n == 'F') is_fa = 1;
+	}
+	if (is_fa && (is_vcf || depth_only)) {
+		fprintf(stderr, "[E::%s] option -F cannot be used with -d/-c\n", __func__);
+		return 1;
+	}
+	if (is_fa) var_only = show_cnt = 0;
+	if (is_fa && min_sum_q == 0)
+		fprintf(stderr, "[W::%s] with option -F, setting a reasonable -s is highly recommended.\n", __func__);
+	if (is_vcf && fai == 0) {
+		fprintf(stderr, "[E::%s] with option -c, the reference genome must be provided.\n", __func__);
+		return 1;
 	}
 	if (optind == argc) {
         fprintf(stderr, "\n");
@@ -164,12 +210,18 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "         -r STR     region [null]\n");
 		fprintf(stderr, "         -v         show variants only\n");
 		fprintf(stderr, "         -c         output in the VCF format (force -v)\n");
+		fprintf(stderr, "         -F         output the consensus in FASTA\n");
+		fprintf(stderr, "         -D FLOAT   soft mask if sumQ > avgSum+FLOAT*sqrt(avgSum) (force -F) [%.2f]\n", max_dev);
 		fprintf(stderr, "\n");
 		return 1;
 	}
 
 	// initialize the auxiliary data structures
 	n = argc - optind; // the number of BAMs on the command line
+	if (is_fa && n > 1) {
+		fprintf(stderr, "[W::%s] with option -F, only the first input file is used.\n", __func__);
+		n = 1;
+	}
 	data = (aux_t**)calloc(n, sizeof(aux_t*)); // data[i] for the i-th input
 	beg = 0; end = 1<<30; tid = -1;  // set the default region
 	if (reg) {
@@ -178,7 +230,7 @@ int main_pileup(int argc, char *argv[])
 	} else chr_end = 0;
 
 	// load the index or put the file position at the right place
-	last_tid = -1;
+	last_tid = -1; last_pos = beg - 1;
 	for (i = 0; i < n; ++i) {
 		bam_hdr_t *htmp;
 		data[i] = (aux_t*)calloc(1, sizeof(aux_t));
@@ -218,12 +270,16 @@ int main_pileup(int argc, char *argv[])
 	while (bam_mplp_auto(mplp, &tid, &pos, n_plp, plp) > 0) { // come to the next covered position
 		if (pos < beg || pos >= end) continue; // out of range; skip
 		for (i = aux.tot_dp = 0; i < n; ++i) aux.tot_dp += n_plp[i];
-		if (last_tid != tid && fai) { // switch of chromosomes
-			free(ref);
-			ref = fai_fetch(fai, h->target_name[tid], &l_ref);
-			last_tid = tid; // note that last_tid is only used when fai is not NULL
+		if (last_tid != tid) {
+			if (is_fa && last_tid >= 0)
+				write_fa(&aux, h->target_name[last_tid], 0, max_dev);
+			if (fai) { // switch of chromosomes
+				free(ref);
+				ref = fai_fetch(fai, h->target_name[tid], &l_ref);
+			}
+			last_tid = tid; last_pos = -1; aux.len = 0;
 		}
-		if (aux.tot_dp == 0) continue; // well, this should not happen
+		if (aux.tot_dp == 0) continue; // well, this should not happen; just a safeguard
 		if (depth_only) { // only print read depth; no allele information
 			fputs(h->target_name[tid], stdout); printf("\t%d", pos+1); // a customized printf() would be faster
 			if (ref == 0 || pos >= l_ref + beg) printf("\tN");
@@ -268,67 +324,94 @@ int main_pileup(int argc, char *argv[])
 					count_alleles(&aux, n);
 				}
 			}
+
 			if (var_only && aux.n_alleles == 1 && a[0].hash>>63 == 0) continue; // var_only mode, but no ALT allele; skip
-			// print
-			fputs(h->target_name[tid], stdout); printf("\t%d", pos+1);
-			if (is_vcf) {
-				fputs("\t.\t", stdout);
-				for (i = 0; i <= aux.max_del; ++i) // print the reference allele up to the longest deletion
-					putchar(ref && pos + i < l_ref + beg? ref[pos + i - beg] : 'N');
-				putchar('\t');
-			} else printf("\t%c\t", ref && pos < l_ref + beg? ref[pos - beg] : 'N'); // print a single reference base
-			// print alleles
-			if (!is_vcf || a[0].hash>>63) { // print if there is no reference allele
-				print_allele(&plp[a[0].pos>>32][(uint32_t)a[0].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf);
-				if (aux.n_alleles > 1) putchar(',');
-			}
-			for (i = k = 1; i < aux.n_a; ++i)
-				if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash) {
-					print_allele(&plp[a[i].pos>>32][(uint32_t)a[i].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf);
-					if (++k != aux.n_alleles) putchar(',');
+			if (is_fa) {
+				int sum_q_del, c, is_ambi = 0, sum_dp = 0;
+				if (pos - beg >= aux.max_len) { // expand arrays
+					aux.max_len = pos - beg + 1;
+					kroundup32(aux.max_len);
+					aux.seq = (char*)realloc(aux.seq, aux.max_len);
+					aux.depth = (int*)realloc(aux.depth, aux.max_len * sizeof(int));
 				}
-			if (is_vcf && aux.n_alleles == 1 && a[0].hash>>63 == 0) putchar('.'); // print placeholder if there is only the reference allele
-			// compute and print qual
-			for (i = !(a[0].hash>>63), qual = 0; i < aux.n_alleles; ++i)
-				qual = qual > aux.sum_q[i]? qual : aux.sum_q[i];
-			if (is_vcf) printf("\t%d\t.\t.\tGT:SQ", qual);
-			if (is_vcf && show_cnt) printf(":FC:RC");
-			// print counts
-			shift = (is_vcf && a[0].hash>>63); // in VCF, if there is no ref allele, we need to shift the allele number
-			for (i = k = 0; i < n; ++i, k += aux.n_alleles) {
-				int max1 = 0, max2 = 0, a1 = -1, a2 = -1, *sum_q = &aux.cnt_q[k];
-				// estimate genotype
-				for (j = 0; j < aux.n_alleles; ++j)
-					if (sum_q[j] > max1) max2 = max1, a2 = a1, max1 = sum_q[j], a1 = j;
-					else if (sum_q[j] > max2) max2 = sum_q[j], a2 = j;
-				if (max1 == 0 || (min_sum_q > 0 && max1 < min_sum_q)) a1 = a2 = -1;
-				else if (max2 == 0 || (min_sum_q > 0 && max2 < min_sum_q)) a2 = a1;
-				// print genotypes
-				if (a1 < 0) printf("\t./.:");
-				else printf("\t%d/%d:", a1 + shift, a2 + shift);
+				for (i = last_pos + 1; i < pos; ++i) // fill gaps
+					aux.seq[i - beg] = 'n', aux.depth[i - beg] = 0;
+				if (aux.n_alleles <= 2) {
+					for (j = sum_q_del = 0; j < n_plp[0]; ++j) // count reads supporting a deletion at this position
+						if (plp[0][j].is_del)
+							sum_q_del += bam_get_qual(plp[0][j].b)[plp[0][j].qpos];
+					if (sum_q_del >= min_sum_q) is_ambi = 1;
+				} else is_ambi = 1;
+				for (i = c = 0; i < aux.n_a; ++i) c |= a[i].b, sum_dp += a[i].q;
+				c = seq_nt16_str[c];
+				if (is_ambi) c = tolower(c);
+				aux.seq[pos - beg] = c;
+				aux.depth[pos - beg] = sum_dp;
+				aux.len = pos - beg + 1;
+			} else { // print VCF or allele summary
+				fputs(h->target_name[tid], stdout); printf("\t%d", pos+1);
+				if (is_vcf) {
+					fputs("\t.\t", stdout);
+					for (i = 0; i <= aux.max_del; ++i) // print the reference allele up to the longest deletion
+						putchar(ref && pos + i < l_ref + beg? ref[pos + i - beg] : 'N');
+					putchar('\t');
+				} else printf("\t%c\t", ref && pos < l_ref + beg? ref[pos - beg] : 'N'); // print a single reference base
+				// print alleles
+				if (!is_vcf || a[0].hash>>63) { // print if there is no reference allele
+					print_allele(&plp[a[0].pos>>32][(uint32_t)a[0].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf);
+					if (aux.n_alleles > 1) putchar(',');
+				}
+				for (i = k = 1; i < aux.n_a; ++i)
+					if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash) {
+						print_allele(&plp[a[i].pos>>32][(uint32_t)a[i].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf);
+						if (++k != aux.n_alleles) putchar(',');
+					}
+				if (is_vcf && aux.n_alleles == 1 && a[0].hash>>63 == 0) putchar('.'); // print placeholder if there is only the reference allele
+				// compute and print qual
+				for (i = !(a[0].hash>>63), qual = 0; i < aux.n_alleles; ++i)
+					qual = qual > aux.sum_q[i]? qual : aux.sum_q[i];
+				if (is_vcf) printf("\t%d\t.\t.\tGT:SQ", qual);
+				if (is_vcf && show_cnt) printf(":FC:RC");
 				// print counts
-				if (shift) fputs("0,", stdout);
-				for (j = 0; j < aux.n_alleles; ++j) {
-					if (j) putchar(',');
-					printf("%d", aux.cnt_q[k+j]);
-				}
-				if (!show_cnt) continue;
-				putchar(':');
-				if (shift) fputs("0,", stdout);
-				for (j = 0; j < aux.n_alleles; ++j) {
-					if (j) putchar(',');
-					printf("%d", aux.cnt_b[(k+j)<<1]);
-				}
-				putchar(':');
-				if (shift) fputs("0,", stdout);
-				for (j = 0; j < aux.n_alleles; ++j) {
-					if (j) putchar(',');
-					printf("%d", aux.cnt_b[(k+j)<<1|1]);
+				shift = (is_vcf && a[0].hash>>63); // in VCF, if there is no ref allele, we need to shift the allele number
+				for (i = k = 0; i < n; ++i, k += aux.n_alleles) {
+					int max1 = 0, max2 = 0, a1 = -1, a2 = -1, *sum_q = &aux.cnt_q[k];
+					// estimate genotype
+					for (j = 0; j < aux.n_alleles; ++j)
+						if (sum_q[j] > max1) max2 = max1, a2 = a1, max1 = sum_q[j], a1 = j;
+						else if (sum_q[j] > max2) max2 = sum_q[j], a2 = j;
+					if (max1 == 0 || (min_sum_q > 0 && max1 < min_sum_q)) a1 = a2 = -1;
+					else if (max2 == 0 || (min_sum_q > 0 && max2 < min_sum_q)) a2 = a1;
+					// print genotypes
+					if (a1 < 0) printf("\t./.:");
+					else printf("\t%d/%d:", a1 + shift, a2 + shift);
+					// print counts
+					if (shift) fputs("0,", stdout);
+					for (j = 0; j < aux.n_alleles; ++j) {
+						if (j) putchar(',');
+						printf("%d", aux.cnt_q[k+j]);
+					}
+					if (!show_cnt) continue;
+					putchar(':');
+					if (shift) fputs("0,", stdout);
+					for (j = 0; j < aux.n_alleles; ++j) {
+						if (j) putchar(',');
+						printf("%d", aux.cnt_b[(k+j)<<1]);
+					}
+					putchar(':');
+					if (shift) fputs("0,", stdout);
+					for (j = 0; j < aux.n_alleles; ++j) {
+						if (j) putchar(',');
+						printf("%d", aux.cnt_b[(k+j)<<1|1]);
+					}
 				}
 			}
+			last_pos = pos;
 		}
-		putchar('\n');
+		if (!is_fa) putchar('\n');
 	}
+	if (is_fa && last_tid >= 0)
+		write_fa(&aux, h->target_name[last_tid], 0, max_dev);
 	free(n_plp); free(plp);
 	bam_mplp_destroy(mplp);
 
@@ -341,6 +424,7 @@ int main_pileup(int argc, char *argv[])
 	if (ref) free(ref);
 	if (fai) fai_destroy(fai);
 	free(aux.cnt_b); free(aux.cnt_q); free(aux.a);
+	free(aux.seq); free(aux.depth);
 	free(data); free(reg);
 	return 0;
 }
