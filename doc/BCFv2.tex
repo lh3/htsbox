@@ -24,18 +24,18 @@ In BCF2, a typed value consists of a typing byte and the actual value with type
 mandated by the typing byte. In the typing byte, the lowest four bits give the
 atomic type. If the number represented by the higher 4 bits is smaller than 15,
 it is the size of the following vector; if the number equals 15, the following
-typed integer is the array size. The table below gives the atomic types and
-their missing values:
+typed integer is the array size. The table below gives the atomic types,
+missing values and their end-of-vector values:
 \begin{center}
-{\small\begin{tabular}{rlrl}
+{\small\begin{tabular}{rlrrl}
 \hline
-Bit 0--3 & C type & Missing value & Description \\
+Bit 0--3 & C type   & Missing value    & End-of-vector    & Description \\
 \hline
-1 & {\tt int8\_t}   & {\tt 0x80}               & signed 8-bit integer \\
-2 & {\tt int16\_t}  & {\tt 0x8000}             & signed 16-bit integer \\
-3 & {\tt int32\_t}  & {\tt 0x80000000}         & signed 32-bit integer \\
-5 & {\tt float}     & {\tt 0x7F800001}         & IEEE 32-bit floating pointer number \\
-7 & {\tt char}      & `{\tt \char92 0}'        & character \\
+1 & {\tt int8\_t}   & {\tt 0x80}       & {\tt 0x81}       & signed 8-bit integer \\
+2 & {\tt int16\_t}  & {\tt 0x8000}     & {\tt 0x8001}     & signed 16-bit integer \\
+3 & {\tt int32\_t}  & {\tt 0x80000000} & {\tt 0x80000001} & signed 32-bit integer \\
+5 & {\tt float}     & {\tt 0x7F800001} & {\tt 0x7F800002} & IEEE 32-bit floating pointer number \\
+7 & {\tt char}      &                  & `{\tt \char92 0}'& character \\
 \hline
 \end{tabular}}
 \end{center}
