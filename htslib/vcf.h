@@ -109,6 +109,13 @@ typedef struct {
 	uint8_t *unpack_ptr;
 } bcf1_t;
 
+#define bcf_int8_missing  INT8_MIN
+#define bcf_int16_missing INT16_MIN
+#define bcf_int32_missing INT32_MIN
+#define bcf_int8_end  (INT8_MIN +1)
+#define bcf_int16_end (INT16_MIN+1)
+#define bcf_int32_end (INT32_MIN+1)
+
 /*******
  * API *
  *******/

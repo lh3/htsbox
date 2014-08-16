@@ -16,7 +16,8 @@ typedef khash_t(vdict) vdict_t;
 #include "kseq.h"
 KSTREAM_DECLARE(gzFile, gzread)
 
-uint32_t bcf_missing_float = 0x7F800001;
+uint32_t bcf_float_missing = 0x7F800001;
+uint32_t bcf_float_end = 0x7F800002;
 uint8_t bcf_type_shift[] = { 0, 0, 1, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static bcf_idinfo_t bcf_idinfo_def = { { 15, 15, 15 }, -1 };
 
@@ -264,7 +265,7 @@ bcf_hdr_t *bcf_hdr_read(BGZF *fp)
 	bcf_hdr_t *h;
 	h = bcf_hdr_init();
 	bgzf_read(fp, magic, 5);
-	if (strncmp((char*)magic, "BCF\2\1", 5) != 0) {
+	if (strncmp((char*)magic, "BCF\2\2", 5) != 0) {
 		if (hts_verbose >= 2)
 			fprintf(stderr, "[E::%s] invalid BCF2 magic string\n", __func__);
 		bcf_hdr_destroy(h);
@@ -280,7 +281,7 @@ bcf_hdr_t *bcf_hdr_read(BGZF *fp)
 
 void bcf_hdr_write(BGZF *fp, const bcf_hdr_t *h)
 {
-	bgzf_write(fp, "BCF\2\1", 5);
+	bgzf_write(fp, "BCF\2\2", 5);
 	bgzf_write(fp, &h->l_text, 4);
 	bgzf_write(fp, h->text, h->l_text);
 }
@@ -433,27 +434,25 @@ void bcf_enc_vint(kstring_t *s, int n, int32_t *a, int wsize)
 	else if (n == 1) bcf_enc_int1(s, a[0]);
 	else {
 		if (wsize <= 0) wsize = n;
-		for (i = 0; i < n; ++i) {
-			if (a[i] == INT32_MIN) continue;
+		for (i = 0; i < n; ++i) { // test min and max to determine the actual integer type
+			if (a[i] == bcf_int32_missing || a[i] == bcf_int32_end) continue;
 			if (max < a[i]) max = a[i];
 			if (min > a[i]) min = a[i];
 		}
-		if (max <= INT8_MAX && min > INT8_MIN) {
+		if (max <= INT8_MAX && min > bcf_int8_end) { // int8_t
 			bcf_enc_size(s, wsize, BCF_BT_INT8);
 			for (i = 0; i < n; ++i)
-				kputc(a[i] == INT32_MIN? INT8_MIN : a[i], s);
-		} else if (max <= INT16_MAX && min > INT16_MIN) {
+				kputc(a[i] == bcf_int32_end? bcf_int8_end : a[i] == bcf_int32_missing? bcf_int8_missing : a[i], s);
+		} else if (max <= INT16_MAX && min > bcf_int16_end) { // int16_t
 			bcf_enc_size(s, wsize, BCF_BT_INT16);
 			for (i = 0; i < n; ++i) {
-				int16_t x = a[i] == INT32_MIN? INT16_MIN : a[i];
+				int16_t x = a[i] == bcf_int32_end? bcf_int16_end : a[i] == bcf_int32_missing? bcf_int16_missing : a[i];
 				kputsn((char*)&x, 2, s);
 			}
-		} else {
+		} else { // int32_t
 			bcf_enc_size(s, wsize, BCF_BT_INT32);
-			for (i = 0; i < n; ++i) {
-				int32_t x = a[i] == INT32_MIN? INT32_MIN : a[i];
-				kputsn((char*)&x, 4, s);
-			}
+			for (i = 0; i < n; ++i)
+				kputsn((char*)&a[i], 4, s);
 		}
 	}
 }
@@ -470,6 +469,17 @@ void bcf_enc_vchar(kstring_t *s, int l, char *a)
 	kputsn(a, l, s);
 }
 
+#define bcf_fmt_array_aux(type, s, n, data, val_missing, val_end, end_ptr) do { \
+		int k; \
+		type *p = (type*)data; \
+		for (k = 0; k < (n) && *p != val_end; ++k, ++p) { \
+			if (k) kputc(',', (s)); \
+			if (*p == val_missing) kputc('.', (s)); \
+			else kputw(*p, (s)); \
+		} \
+		*(end_ptr) = k; \
+	} while (0)
+
 void bcf_fmt_array(kstring_t *s, int n, int type, void *data)
 {
 	int j = 0;
@@ -478,34 +488,23 @@ void bcf_fmt_array(kstring_t *s, int n, int type, void *data)
 		return;
 	}
 	if (type == BCF_BT_INT8) {
-		int8_t *p = (int8_t*)data;
-		for (j = 0; j < n && *p != INT8_MIN; ++j, ++p) {
-			if (j) kputc(',', s);
-			kputw(*p, s);
-		}
-	} else if (type == BCF_BT_CHAR) {
+		bcf_fmt_array_aux(int8_t, s, n, data, bcf_int8_missing, bcf_int8_end, &j);
+	} else if (type == BCF_BT_CHAR) { // TODO: htslib has bcf_str_missing, but I don't know how to use that
 		char *p = (char*)data;
 		for (j = 0; j < n && *p; ++j, ++p) kputc(*p, s);
 	} else if (type == BCF_BT_INT32) {
-		int32_t *p = (int32_t*)data;
-		for (j = 0; j < n && *p != INT32_MIN; ++j, ++p) {
-			if (j) kputc(',', s);
-			kputw(*p, s);
-		}
+		bcf_fmt_array_aux(int32_t, s, n, data, bcf_int32_missing, bcf_int32_end, &j);
 	} else if (type == BCF_BT_FLOAT) {
 		float *p = (float*)data;
-		for (j = 0; j < n && *(uint32_t*)p != bcf_missing_float; ++j, ++p) {
+		for (j = 0; j < n && *(uint32_t*)p != bcf_float_end; ++j, ++p) {
 			if (j) kputc(',', s);
-			ksprintf(s, "%g", *p);
+			if (*(uint32_t*)p == bcf_float_missing) kputc('.', s);
+			else ksprintf(s, "%g", *p);
 		}
 	} else if (type == BCF_BT_INT16) {
-		int16_t *p = (int16_t*)data;
-		for (j = 0; j < n && *p != INT16_MIN; ++j, ++p) {
-			if (j) kputc(',', s);
-			kputw(*p, s);
-		}
+		bcf_fmt_array_aux(int16_t, s, n, data, bcf_int16_missing, bcf_int16_end, &j);
 	}
-	if (n && j == 0) kputc('.', s);
+	if (n && j == 0) kputc('.', s); // no actual value; write an empty array "."
 }
 
 uint8_t *bcf_fmt_sized_array(kstring_t *s, uint8_t *ptr)
@@ -583,7 +582,7 @@ int vcf_parse1(kstring_t *s, const bcf_hdr_t *h, bcf1_t *v)
 			}
 		} else if (i == 5) { // QUAL
 			if (strcmp(p, ".")) v->qual = atof(p);
-			else memcpy(&v->qual, &bcf_missing_float, 4);
+			else memcpy(&v->qual, &bcf_float_missing, 4);
 		} else if (i == 6) { // FILTER
 			if (strcmp(p, ".")) {
 				int32_t *a;
@@ -714,8 +713,8 @@ int vcf_parse1(kstring_t *s, const bcf_hdr_t *h, bcf1_t *v)
 			}
 			for (j = 0; j < v->n_fmt; ++j)
 				fmt[j].buf = (uint8_t*)mem->s + fmt[j].offset;
-			// fill the sample fields; at beginning of the loop, t points to the first char of a format
-			for (t = q + 1, j = m = 0;; ++t) { // j: fmt id, m: sample id
+			// fill the sample fields; at beginning of the loop, t points to the first char of an individual field (i.e. a field after FORMAT)
+			for (t = q + 1, j = m = 0;; ++t) { // j-th fmt, m-th sample
 				fmt_aux_t *z = &fmt[j];
 				if ((z->y>>4&0xf) == BCF_HT_STR) {
 					if (z->is_gt) { // genotypes
@@ -726,7 +725,7 @@ int vcf_parse1(kstring_t *s, const bcf_hdr_t *h, bcf1_t *v)
 							is_phased = (*t == '|');
 							if (*t == ':' || *t == 0) break;
 						}
-						for (; l < z->size>>2; ++l) x[l] = INT32_MIN;
+						for (; l < z->size>>2; ++l) x[l] = bcf_int32_end;
 					} else {
 						char *x = (char*)z->buf + z->size * m;
 						for (r = t, l = 0; *t != ':' && *t; ++t) x[l++] = *t;
@@ -735,40 +734,38 @@ int vcf_parse1(kstring_t *s, const bcf_hdr_t *h, bcf1_t *v)
 				} else if ((z->y>>4&0xf) == BCF_HT_INT) {
 					int32_t *x = (int32_t*)(z->buf + z->size * m);
 					for (l = 0;; ++t) {
-						if (*t == '.') x[l++] = INT32_MIN, ++t; // ++t to skip "."
+						if (*t == '.') x[l++] = bcf_int32_missing, ++t; // ++t to skip "."
 						else x[l++] = strtol(t, &t, 10);
 						if (*t == ':' || *t == 0) break;
 					}
-					// The original condition l != z->size>>2 is not robust: with malformatted
-					//	VCFs l can be bigger than z->size>>2 (e.g. '-' instead of int)
-					// Also above x[l++] without checking the limits may not be safe.
-					for (; l < z->size>>2; ++l) x[l] = INT32_MIN;
+					for (; l < z->size>>2; ++l) x[l] = bcf_int32_end;
 				} else if ((z->y>>4&0xf) == BCF_HT_REAL) {
 					float *x = (float*)(z->buf + z->size * m);
 					for (l = 0;; ++t) {
-						if (*t == '.' && !isdigit(t[1])) *(int32_t*)&x[l++] = bcf_missing_float, ++t; // ++t to skip "."
+						if (*t == '.' && !isdigit(t[1])) *(int32_t*)&x[l++] = bcf_float_missing, ++t; // ++t to skip "."
 						else x[l++] = strtod(t, &t);
 						if (*t == ':' || *t == 0) break;
 					}
-					for (; l < z->size>>2; ++l) *(int32_t*)(x+l) = bcf_missing_float;
-				} else abort();
-				if (*t == 0) {
-					for (++j; j < v->n_fmt; ++j) { // fill missing values
+					for (; l < z->size>>2; ++l) *(int32_t*)(x+l) = bcf_float_end;
+				} else abort(); // unknown type
+				if (*t == 0) { // now we are at the end of the individual field
+					// Write end-of-vector values to the rest of FORMAT in the field. This happens if the entire field is missing.
+					for (++j; j < v->n_fmt; ++j) {
 						z = &fmt[j];
 						if ((z->y>>4&0xf) == BCF_HT_STR) {
 							if (z->is_gt) {
 								int32_t *x = (int32_t*)(z->buf + z->size * m);
-								for (l = 0; l != z->size>>2; ++l) x[l] = INT32_MIN;
+								for (l = 0; l != z->size>>2; ++l) x[l] = bcf_int32_end;
 							} else {
 								char *x = (char*)z->buf + z->size * m;
 								for (l = 0; l != z->size; ++l) x[l] = 0;
 							}
 						} else if ((z->y>>4&0xf) == BCF_HT_INT) {
 							int32_t *x = (int32_t*)(z->buf + z->size * m);
-							for (l = 0; l != z->size>>2; ++l) x[l] = INT32_MIN;
+							for (l = 0; l != z->size>>2; ++l) x[l] = bcf_int32_end;
 						} else if ((z->y>>4&0xf) == BCF_HT_REAL) {
 							float *x = (float*)(z->buf + z->size * m);
-							for (l = 0; l != z->size>>2; ++l) *(int32_t*)(x+l) = bcf_missing_float;
+							for (l = 0; l != z->size>>2; ++l) *(int32_t*)(x+l) = bcf_float_end;
 						}
 					}
 					if (t == end) break;
@@ -914,7 +911,7 @@ int vcf_format1(const bcf_hdr_t *h, const bcf1_t *v, kstring_t *s)
 		}
 	} else kputc('.', s);
 	kputc('\t', s); // QUAL
-	if (memcmp(&v->qual, &bcf_missing_float, 4) == 0) kputc('.', s); // QUAL
+	if (memcmp(&v->qual, &bcf_float_missing, 4) == 0) kputc('.', s); // QUAL
 	else ksprintf(s, "%g", v->qual);
 	kputc('\t', s); // FILTER
 	if (v->d.n_flt) {

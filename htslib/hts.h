@@ -1,7 +1,7 @@
 #ifndef HTS_H
 #define HTS_H
 
-#define HTS_VERSION "lite-r221"
+#define HTS_VERSION "lite-r243"
 
 #include <stdint.h>
 #include "bgzf.h"
