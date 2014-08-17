@@ -74,7 +74,7 @@ int bcf_hdr_parse_line2(const char *str, uint32_t *info, int *id_beg, int *id_en
 			if (q - val == 7 && strncmp(val, "Integer", 7) == 0) type = BCF_HT_INT;
 			else if (q - val == 5 && strncmp(val, "Float", 5) == 0) type = BCF_HT_REAL;
 			else if (q - val == 6 && strncmp(val, "String", 6) == 0) type = BCF_HT_STR;
-			else if (q - val == 4 && strncmp(val, "Flag", 6) == 0) type = BCF_HT_FLAG;
+			else if (q - val == 4 && strncmp(val, "Flag", 4) == 0) type = BCF_HT_FLAG;
 		} else if (which == 3) {
 			if (*val == 'A') var = BCF_VL_A;
 			else if (*val == 'G') var = BCF_VL_G;
