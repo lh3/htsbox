@@ -12,7 +12,7 @@
 
 \makeindex
 
-\title{BCF2 Quick Reference}
+\title{BCFv2.2 Quick Reference}
 \author{}
 \date{}
 
@@ -45,7 +45,8 @@ describing an allele and its phase w.r.t. the previous allele. The first allele
 does not carry the phase information. In the vector, each integer is organized
 as `{\tt \char40 allele+1\char41\char60\char60 1\char124 phased}' where
 {\tt allele} is set to -1 if the allele in GT is a dot `.' (thus the higher
-bits are all 0). The vector is padded with missing values if the GT having fewer ploidy.
+bits are all 0). The vector is padded with end-of-vector values if the GT
+having fewer ploidy.
 }
 \begin{table}[ht]
 \centering
@@ -76,7 +77,7 @@ bits are all 0). The vector is padded with missing values if the GT having fewer
   & & {\sf fmt\_key} & Format key, defined in the dectionary & {\tt typed int} & \\\cline{3-6}
   & & {\sf fmt\_type} & Typing byte of each individual value, possibly followed by a typed int for the vector length & {\tt uint8\_t+} & \\\cline{3-6}
   & & {\sf fmt\_value} & Array of values. The information of each individual is concatenated in the vector. Every value is of the same {\sf fmt\_type}.
-  	Variable-length vectors are padded with missing values; a string is stored as a vector of {\tt char}. & (by {\sf fmt\_type}) &\\
+  	Variable-length vectors are padded with end-of-vector values; a string is stored as a vector of {\tt char}. & (by {\sf fmt\_type}) &\\
   \cline{1-6}
 \end{tabular}}
 \end{table}
