@@ -266,6 +266,9 @@ int main_pileup(int argc, char *argv[])
 			puts("##FORMAT=<ID=FC,Number=A,Type=Integer,Description=\"Number of supporting reads on the forward strand\">");
 			puts("##FORMAT=<ID=RC,Number=A,Type=Integer,Description=\"Number of supporting reads on the reverse strand\">");
 		}
+		fputs("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT", stdout);
+		for (i = 0; i < n; ++i) printf("\t%s", argv[optind+i]);
+		putchar('\n');
 	}
 	while (bam_mplp_auto(mplp, &tid, &pos, n_plp, plp) > 0) { // come to the next covered position
 		if (pos < beg || pos >= end) continue; // out of range; skip
