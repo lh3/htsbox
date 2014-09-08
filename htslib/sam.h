@@ -56,6 +56,7 @@ typedef struct {
 #define BAM_FSECONDARY   256
 #define BAM_FQCFAIL      512
 #define BAM_FDUP        1024
+#define BAM_FSUPP       2048
 
 /*************************
  *** Alignment records ***
@@ -167,6 +168,8 @@ extern "C" {
 
 #if !defined(BAM_NO_PILEUP)
 
+#define BAM_PLP_MASK (BAM_FUNMAP | BAM_FSECONDARY | BAM_FQCFAIL | BAM_FDUP)
+
 typedef struct {
 	bam1_t *b;
 	int32_t qpos;
@@ -196,6 +199,7 @@ extern "C" {
 	void bam_plp_reset(bam_plp_t iter);
 
 	bam_mplp_t bam_mplp_init(int n, bam_plp_auto_f func, void **data);
+	void bam_mplp_set_mask(bam_mplp_t iter, int mask);
 	void bam_mplp_destroy(bam_mplp_t iter);
 	void bam_mplp_set_maxcnt(bam_mplp_t iter, int maxcnt);
 	int bam_mplp_auto(bam_mplp_t iter, int *_tid, int *_pos, int *n_plp, const bam_pileup1_t **plp);

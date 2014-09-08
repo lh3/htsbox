@@ -821,8 +821,6 @@ char *bam_aux2Z(const uint8_t *s)
 
 #include <assert.h>
 
-#define BAM_DEF_MASK (BAM_FUNMAP | BAM_FSECONDARY | BAM_FQCFAIL | BAM_FDUP)
-
 /*******************
  *** Memory pool ***
  *******************/
@@ -986,7 +984,7 @@ bam_plp_t bam_plp_init(bam_plp_auto_f func, void *data)
 	iter->head = iter->tail = mp_alloc(iter->mp);
 	iter->dummy = mp_alloc(iter->mp);
 	iter->max_tid = iter->max_pos = -1;
-	iter->flag_mask = BAM_DEF_MASK;
+	iter->flag_mask = BAM_PLP_MASK;
 	iter->maxcnt = 8000;
 	if (func) {
 		iter->func = func;
@@ -1121,7 +1119,7 @@ void bam_plp_reset(bam_plp_t iter)
 
 void bam_plp_set_mask(bam_plp_t iter, int mask)
 {
-	iter->flag_mask = mask < 0? BAM_DEF_MASK : (BAM_FUNMAP | mask);
+	iter->flag_mask = mask < 0? BAM_PLP_MASK : (BAM_FUNMAP | mask);
 }
 
 void bam_plp_set_maxcnt(bam_plp_t iter, int maxcnt)
@@ -1164,6 +1162,13 @@ void bam_mplp_set_maxcnt(bam_mplp_t iter, int maxcnt)
 	int i;
 	for (i = 0; i < iter->n; ++i)
 		iter->iter[i]->maxcnt = maxcnt;
+}
+
+void bam_mplp_set_mask(bam_mplp_t iter, int mask)
+{
+	int i;
+	for (i = 0; i < iter->n; ++i)
+		bam_plp_set_mask(iter->iter[i], mask);
 }
 
 void bam_mplp_destroy(bam_mplp_t iter)
