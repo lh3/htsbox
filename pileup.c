@@ -16,6 +16,7 @@ typedef struct {     // auxiliary data structure
 	BGZF *fp;        // the file handler
 	hts_itr_t *itr;  // NULL if a region not specified
 	int min_mapQ, min_len; // mapQ filter; length filter
+	float div_coef;
 } aux_t;
 
 // This function reads a BAM alignment from one BAM file.
@@ -23,9 +24,11 @@ static int read_bam(void *data, bam1_t *b) // read level filters better go here 
 {
 	aux_t *aux = (aux_t*)data; // data in fact is a pointer to an auxiliary structure
 	int ret = aux->itr? bam_itr_next(aux->fp, aux->itr, b) : bam_read1(aux->fp, b);
+	if (ret < 0) return ret;
 	if (!(b->core.flag&BAM_FUNMAP)) {
-		if ((int)b->core.qual < aux->min_mapQ) b->core.flag |= BAM_FUNMAP;
-		else if (aux->min_len > 0) {
+		if ((int)b->core.qual < aux->min_mapQ) {
+			b->core.flag |= BAM_FUNMAP;
+		} else if (aux->min_len > 0) {
 			int k, l;
 			const uint32_t *cigar = bam_get_cigar(b);
 			for (k = l = 0; k < b->core.n_cigar; ++k) { // compute the query length in the alignment
@@ -34,6 +37,31 @@ static int read_bam(void *data, bam1_t *b) // read level filters better go here 
 					l += bam_cigar_oplen(cigar[k]);
 			}
 			if (l < aux->min_len) b->core.flag |= BAM_FUNMAP;
+		} else if (aux->div_coef < 1.) {
+			uint8_t *NM;
+			int nm, k, n_gaps = 0, n_opens = 0, n_matches = 0;
+			const uint32_t *cigar = bam_get_cigar(b);
+			if ((NM = bam_aux_get(b, "NM")) == 0) return ret;
+			if ((nm = bam_aux2i(NM)) == 0) return ret;
+			for (k = 0; k < b->core.n_cigar; ++k) {
+				int op = bam_cigar_op(cigar[k]);
+				int l = bam_cigar_oplen(cigar[k]);
+				if (op == BAM_CMATCH) n_matches += l;
+				else if (op == BAM_CINS || op == BAM_CDEL) ++n_opens, n_gaps += l;
+			}
+			if (n_gaps <= nm) {
+				int x = (nm - n_gaps) + n_opens, q;
+				double expected = (n_matches + n_gaps) * aux->div_coef;
+				double y = 1., p = 1.;
+				if (x < expected) return ret;
+				for (k = 1; k < x; ++k)
+					y *= expected / k, p += y;
+				p = 1. - p * exp(-expected);
+				p = p > 1e-6? -4.343 * log(-p) : 60.;
+				q = (int)(p + .499);
+				b->core.qual = b->core.qual > q? b->core.qual - q : 0;
+				if ((int)b->core.qual < aux->min_mapQ) b->core.flag |= BAM_FUNMAP;
+			}
 		}
 	}
 	return ret;
@@ -164,7 +192,7 @@ int main_pileup(int argc, char *argv[])
 	int i, j, n, tid, beg, end, pos, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_sum_q = 0, no_supp = 0;
 	int depth_only = 0, is_vcf = 0, var_only = 0, show_cnt = 0, is_fa = 0;
 	int last_tid, last_pos;
-	float max_dev = 3.0;
+	float max_dev = 3.0, div_coef = 1.;
 	const bam_pileup1_t **plp;
 	char *ref = 0, *reg = 0, *chr_end; // specified region
 	faidx_t *fai = 0;
@@ -174,7 +202,7 @@ int main_pileup(int argc, char *argv[])
 	bam_mplp_t mplp;
 
 	// parse the command line
-	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCSFs:D:")) >= 0) {
+	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCSFs:D:V:")) >= 0) {
 		if (n == 'f') fai = fai_load(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
 		else if (n == 'r') reg = strdup(optarg);   // parsing a region requires a BAM header
@@ -184,6 +212,7 @@ int main_pileup(int argc, char *argv[])
 		else if (n == 'd') depth_only = 1;
 		else if (n == 'S') no_supp = 1;
 		else if (n == 'v') var_only = 1;
+		else if (n == 'V') div_coef = atof(optarg);
 		else if (n == 'c') is_vcf = var_only = 1;
 		else if (n == 'C') show_cnt = 1;
 		else if (n == 'D') max_dev = atof(optarg), is_fa = 1;
@@ -239,6 +268,7 @@ int main_pileup(int argc, char *argv[])
 		data[i]->fp = bgzf_open(argv[optind+i], "r"); // open BAM
 		data[i]->min_mapQ = mapQ;                     // set the mapQ filter
 		data[i]->min_len  = min_len;                  // set the qlen filter
+		data[i]->div_coef = div_coef;
 		htmp = bam_hdr_read(data[i]->fp);             // read the BAM header
 		if (i == 0 && chr_end) {
 			char c = *chr_end;
