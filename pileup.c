@@ -57,7 +57,7 @@ static int read_bam(void *data, bam1_t *b) // read level filters better go here 
 				for (k = 1; k < x; ++k)
 					y *= expected / k, p += y;
 				p = 1. - p * exp(-expected);
-				p = p > 1e-6? -4.343 * log(-p) : 60.;
+				p = p > 1e-6? -4.343 * log(p) : 60.;
 				q = (int)(p + .499);
 				b->core.qual = b->core.qual > q? b->core.qual - q : 0;
 				if ((int)b->core.qual < aux->min_mapQ) b->core.flag |= BAM_FUNMAP;
