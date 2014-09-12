@@ -16,6 +16,7 @@ typedef struct {     // auxiliary data structure
 	BGZF *fp;        // the file handler
 	hts_itr_t *itr;  // NULL if a region not specified
 	int min_mapQ, min_len; // mapQ filter; length filter
+	int min_supp_len;
 	float div_coef;
 } aux_t;
 
@@ -28,7 +29,7 @@ static int read_bam(void *data, bam1_t *b) // read level filters better go here 
 	if (!(b->core.flag&BAM_FUNMAP)) {
 		if ((int)b->core.qual < aux->min_mapQ) {
 			b->core.flag |= BAM_FUNMAP;
-		} else if (aux->min_len > 0) {
+		} else if (aux->min_len > 0 || aux->min_supp_len > 0) {
 			int k, l;
 			const uint32_t *cigar = bam_get_cigar(b);
 			for (k = l = 0; k < b->core.n_cigar; ++k) { // compute the query length in the alignment
@@ -37,7 +38,9 @@ static int read_bam(void *data, bam1_t *b) // read level filters better go here 
 					l += bam_cigar_oplen(cigar[k]);
 			}
 			if (l < aux->min_len) b->core.flag |= BAM_FUNMAP;
-		} else if (aux->div_coef < 1.) {
+			if (l < aux->min_supp_len && (b->core.flag&BAM_FSUPP)) b->core.flag |= BAM_FUNMAP;
+		}
+		if (!(b->core.flag&BAM_FUNMAP) && aux->div_coef < 1.) {
 			uint8_t *NM;
 			int nm, k, n_gaps = 0, n_opens = 0, n_matches = 0;
 			const uint32_t *cigar = bam_get_cigar(b);
@@ -189,7 +192,7 @@ static void write_fa(paux_t *a, const char *name, int beg, float max_dev)
 
 int main_pileup(int argc, char *argv[])
 {
-	int i, j, n, tid, beg, end, pos, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_sum_q = 0, no_supp = 0;
+	int i, j, n, tid, beg, end, pos, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_sum_q = 0, min_supp_len = 0;
 	int depth_only = 0, is_vcf = 0, var_only = 0, show_cnt = 0, is_fa = 0;
 	int last_tid, last_pos;
 	float max_dev = 3.0, div_coef = 1.;
@@ -202,7 +205,7 @@ int main_pileup(int argc, char *argv[])
 	bam_mplp_t mplp;
 
 	// parse the command line
-	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCSFs:D:V:")) >= 0) {
+	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:u")) >= 0) {
 		if (n == 'f') fai = fai_load(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
 		else if (n == 'r') reg = strdup(optarg);   // parsing a region requires a BAM header
@@ -210,13 +213,17 @@ int main_pileup(int argc, char *argv[])
 		else if (n == 'q') mapQ = atoi(optarg);    // mapping quality threshold
 		else if (n == 's') min_sum_q = atoi(optarg);
 		else if (n == 'd') depth_only = 1;
-		else if (n == 'S') no_supp = 1;
+		else if (n == 'S') min_supp_len = atoi(optarg);
 		else if (n == 'v') var_only = 1;
 		else if (n == 'V') div_coef = atof(optarg);
 		else if (n == 'c') is_vcf = var_only = 1;
 		else if (n == 'C') show_cnt = 1;
 		else if (n == 'D') max_dev = atof(optarg), is_fa = 1;
 		else if (n == 'F') is_fa = 1;
+		else if (n == 'u') {
+			baseQ = 3; mapQ = 20;
+			min_supp_len = 300; min_sum_q = 5; div_coef = .01;
+		}
 	}
 	if (is_fa && (is_vcf || depth_only)) {
 		fprintf(stderr, "[E::%s] option -F cannot be used with -d/-c\n", __func__);
@@ -238,10 +245,11 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "         -Q INT     minimum base quality [%d]\n", baseQ);
 		fprintf(stderr, "         -s INT     drop alleles with sum of quality below INT [%d]\n", min_sum_q);
 		fprintf(stderr, "         -r STR     region [null]\n");
-		fprintf(stderr, "         -S         skip supplementary alignments\n");
+		fprintf(stderr, "         -S INT     minimum supplementary alignment length\n");
 		fprintf(stderr, "         -v         show variants only\n");
 		fprintf(stderr, "         -c         output in the VCF format (force -v)\n");
 		fprintf(stderr, "         -F         output the consensus in FASTA\n");
+		fprintf(stderr, "         -u         unitig calling mode (-V.01 -S300 -q20 -Q3 -s5)\n");
 		fprintf(stderr, "         -D FLOAT   soft mask if sumQ > avgSum+FLOAT*sqrt(avgSum) (force -F) [%.2f]\n", max_dev);
 		fprintf(stderr, "\n");
 		return 1;
@@ -269,6 +277,7 @@ int main_pileup(int argc, char *argv[])
 		data[i]->min_mapQ = mapQ;                     // set the mapQ filter
 		data[i]->min_len  = min_len;                  // set the qlen filter
 		data[i]->div_coef = div_coef;
+		data[i]->min_supp_len = min_supp_len;
 		htmp = bam_hdr_read(data[i]->fp);             // read the BAM header
 		if (i == 0 && chr_end) {
 			char c = *chr_end;
@@ -287,7 +296,6 @@ int main_pileup(int argc, char *argv[])
 
 	// the core multi-pileup loop
 	mplp = bam_mplp_init(n, read_bam, (void**)data); // initialization
-	if (no_supp) bam_mplp_set_mask(mplp, BAM_PLP_MASK|BAM_FSUPP);
 	n_plp = (int*)calloc(n, sizeof(int)); // n_plp[i] is the number of covering reads from the i-th BAM
 	plp = (const bam_pileup1_t**)calloc(n, sizeof(const bam_pileup1_t*)); // plp[i] points to the array of covering reads (internal in mplp)
 	memset(&aux, 0, sizeof(paux_t));
