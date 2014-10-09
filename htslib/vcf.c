@@ -954,7 +954,7 @@ int vcf_format1(const bcf_hdr_t *h, const bcf1_t *v, kstring_t *s)
 				if (i) kputc(':', s);
 				if (gt_i == i) {
 					int8_t *x = (int8_t*)(f->p + j * f->size); // FIXME: does not work with n_alt >= 64
-					for (l = 0; l < f->n && x[l] != INT8_MIN; ++l) {
+					for (l = 0; l < f->n && x[l] != bcf_int8_end; ++l) {
 						if (l) kputc("/|"[x[l]&1], s);
 						if (x[l]>>1) kputw((x[l]>>1) - 1, s);
 						else kputc('.', s);
