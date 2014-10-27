@@ -73,7 +73,7 @@ static inline int read1(BGZF *fp, bam1_t *b, hts_itr_t *itr)
 	else return bam_itr_next(fp, itr, b);
 }
 
-int main_mapchk(int argc, char *argv[])
+int main_mapchk2(int argc, char *argv[])
 {
 	int c, tid = -1, ref_len = 0, max_len = 0, max_alloc = 0, qthres = 20;
 	char *ref = 0, *reg = 0;
@@ -175,6 +175,126 @@ int main_mapchk(int argc, char *argv[])
 	free(ref);
 	fai_destroy(fai);
 	bgzf_close(fp);
+
+	memset(&all, 0, sizeof(errstat_t));
+	{
+		int i, j, k, l; 
+		for (l = 0; l < max_len; ++l)
+			for (i = 0; i < 94; ++i)
+				for (j = 0; j < 5; ++j)
+					for (k = 0; k < 8; ++k)
+						all.q[i][j][k] += e[l].q[i][j][k];
+		print_stat(&all, 0, qthres);
+		for (l = 0; l < max_len; ++l)
+			print_stat(&e[l], l + 1, qthres);
+	}
+	free(e);
+	return 0;
+}
+
+typedef struct {
+	BGZF *fp;
+	hts_itr_t *itr;
+} aux_t;
+
+static int read1_plp(void *data, bam1_t *b)
+{
+	int ret;
+	aux_t *a = (aux_t*)data;
+	ret = a->itr? bam_itr_next(a->fp, a->itr, b) : bam_read1(a->fp, b);
+	if ((b->core.flag & (BAM_FSECONDARY|BAM_FSUPP)) || b->core.tid < 0)
+		b->core.flag |= BAM_FUNMAP;
+	return ret;
+}
+
+int main_mapchk(int argc, char *argv[])
+{
+	int c, last_tid = -1, tid, pos, ref_len = 0, max_len = 0, max_alloc = 0, qthres = 20, n_plp;
+	double fthres = 0.4;
+	const bam_pileup1_t *plp;
+	bam_mplp_t mplp;
+	char *ref = 0, *reg = 0;
+	faidx_t *fai;
+	bam_hdr_t *h;
+	aux_t aux = {0,0}, *auxp = &aux;
+	errstat_t all, *e = 0;
+
+	while ((c = getopt(argc, argv, "r:q:f:")) >= 0) {
+		if (c == 'r') reg = optarg;
+		else if (c == 'q') qthres = atoi(optarg);
+		else if (c == 'f') fthres = atof(optarg);
+	}
+	if (optind + 2 > argc) {
+		fprintf(stderr, "\n");
+		fprintf(stderr, "Usage:   htsbox mapchk [options] <aln.bam> <ref.fa>\n\n");
+		fprintf(stderr, "Options: -r STR       region [null]\n");
+		fprintf(stderr, "         -q INT       threshold for HIGH quality [%d]\n", qthres);
+		fprintf(stderr, "         -f FLOAT     skip sites with excessive non-ref bases [%.2f]\n", fthres);
+		fprintf(stderr, "\n");
+		return 1;
+	}
+	aux.fp = bgzf_open(argv[optind], "r");
+	fai = fai_load(argv[optind+1]);
+	h = bam_hdr_read(aux.fp);
+	if (reg) {
+		hts_idx_t *idx;
+		idx = bam_index_load(argv[optind]);
+		aux.itr = bam_itr_querys(idx, h, reg);
+		hts_idx_destroy(idx);
+	}
+	mplp = bam_mplp_init(1, read1_plp, (void**)&auxp);
+	while (bam_mplp_auto(mplp, &tid, &pos, &n_plp, &plp) > 0) {
+		int i, r[2], n_var, n_high;
+		if (n_plp == 0) continue;
+		// get the reference sequence
+		if (tid != last_tid) {
+			free(ref);
+			ref = faidx_fetch_seq(fai, h->target_name[tid], 0, INT_MAX, &ref_len);
+			for (i = 0; i < ref_len; ++i)
+				ref[i] = seq_nt6_table[(int)ref[i]] - 1;
+			last_tid = tid;
+		}
+		r[0] = ref[pos], r[1] = 3 - r[0];
+		if (r[0] >= 4) continue; // ignore the rest if the reference base is "N"
+		// compute n_var
+		for (i = n_var = n_high = 0; i < n_plp; ++i) {
+			bam_pileup1_t *p = (bam_pileup1_t*)&plp[i];
+			const uint8_t *seq = bam_get_seq(p->b), *qual = seq + ((p->b->core.l_qseq + 1) >> 1);
+			int b = seq_nt16to4_table[bam_seqi(seq, p->qpos)], q = qual[p->qpos];
+			p->aux = b<<8 | q; // cache the base and the quality
+			if (q >= qthres) ++n_high;
+			if (q >= qthres && (p->indel != 0 || b != r[0])) ++n_var;
+		}
+		if (n_high >= 3 && (double)n_var / n_high > fthres) continue;
+		// expand $e when necessary
+		for (i = 0; i < n_plp; ++i)
+			max_len = max_len > plp[i].b->core.l_qseq? max_len : plp[i].b->core.l_qseq;
+		if (max_len > max_alloc) {
+			int old_max = max_alloc;
+			max_alloc = max_len;
+			kroundup32(max_alloc);
+			e = (errstat_t*)realloc(e, max_alloc * sizeof(errstat_t));
+			memset(&e[old_max], 0, (max_alloc - old_max) * sizeof(errstat_t));
+		}
+		// fill $e
+		for (i = 0; i < n_plp; ++i) {
+			const bam_pileup1_t *p = &plp[i];
+			int x = p->qpos, b = p->aux>>8, q = p->aux&0xff, is_rev = !!bam_is_rev(p->b);
+			if (is_rev) {
+				x = p->b->core.l_qseq - 1 - p->qpos;
+				b = b < 4? 3 - b : 4;
+			}
+			++e[x].q[q][b][r[is_rev]];
+			if (p->indel > 0) ++e[x].q[q][b][5];
+			if (p->indel < 0) ++e[x].q[q][b][6];
+		}
+	}
+	bam_mplp_destroy(mplp);
+	if (aux.itr) hts_itr_destroy(aux.itr);
+	bam_hdr_destroy(h);
+	free(ref);
+	fai_destroy(fai);
+	bgzf_close(aux.fp);
 
 	memset(&all, 0, sizeof(errstat_t));
 	{
