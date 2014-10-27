@@ -49,6 +49,7 @@ static void print_stat(errstat_t *e, int pos, int qthres)
 	if (pos <= 0) printf("ALL");
 	else printf("%d", pos);
 	for (i = 0; i < 2; ++i) {
+		printf("\t%lld", (long long)sum[i]);
 		for (j = 0; j < 4; ++j) {
 			int64_t s = 0;
 			putchar('\t');
@@ -134,7 +135,7 @@ int main_mapchk(int argc, char *argv[])
 			int old_max = max_alloc;
 			max_alloc = max_len;
 			kroundup32(max_alloc);
-			e = realloc(e, max_alloc * sizeof(errstat_t));
+			e = (errstat_t*)realloc(e, max_alloc * sizeof(errstat_t));
 			memset(&e[old_max], 0, (max_alloc - old_max) * sizeof(errstat_t));
 		}
 		// count errors
