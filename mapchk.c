@@ -57,9 +57,8 @@ static void print_stat(errstat_t *e, int pos, int qthres)
 			for (k = 0; k < 7; ++k) {
 				if (k != 4) {
 					if (k) putchar(':');
-					if (j == k) {
-						printf("Q%d", (int)(-4.343 * log((double)s / (c[i][j][j]+s))));
-					} else printf("%.2d", (int)(100. * c[i][j][k] / s + .499));
+					if (j == k) printf("Q%d", (int)(-4.343 * log((s+1e-6) / (c[i][j][j]+s+1e-6))));
+					else printf("%.2d", (int)(100. * (c[i][j][k]+.25e-6) / (s+1e-6) + .499));
 				}
 			}
 		}
@@ -89,7 +88,11 @@ int main_mapchk(int argc, char *argv[])
 		else if (c == 'q') qthres = atoi(optarg);
 	}
 	if (optind + 2 > argc) {
-		fprintf(stderr, "Usage: htsbox mapchk [-r reg] <aln.bam> <ref.fa>\n");
+		fprintf(stderr, "\n");
+		fprintf(stderr, "Usage:   htsbox mapchk [options] <aln.bam> <ref.fa>\n\n");
+		fprintf(stderr, "Options: -r STR       region [null]\n");
+		fprintf(stderr, "         -q INT       threshold for HIGH quality [%d]\n", qthres);
+		fprintf(stderr, "\n");
 		return 1;
 	}
 	fp = bgzf_open(argv[optind], "r");
@@ -181,6 +184,8 @@ int main_mapchk(int argc, char *argv[])
 					for (k = 0; k < 8; ++k)
 						all.q[i][j][k] += e[l].q[i][j][k];
 		print_stat(&all, 0, qthres);
+		for (l = 0; l < max_len; ++l)
+			print_stat(&e[l], l + 1, qthres);
 	}
 	free(e);
 	return 0;
