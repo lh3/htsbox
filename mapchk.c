@@ -35,18 +35,20 @@ static uint8_t seq_nt6_table[256] = {
 static void print_stat(errstat_t *e, int pos, int qthres)
 {
 	int i, j, k;
-	int64_t sum[2], c[2][4][7];
-	sum[0] = sum[1] = 0;
+	int64_t sum[2] = {0, 0}, same[2] = {0, 0}, c[2][4][7];
 	memset(c, 0, 2 * 4 * 7 * 8);
 	for (i = 0; i < 94; ++i) {
 		int x = i < qthres? 0 : 1;
-		for (j = 0; j < 4; ++j)
+		for (j = 0; j < 4; ++j) {
 			for (k = 0; k < 7; ++k)
 				if (k != 4)
 					sum[x] += e->q[i][j][k], c[x][j][k] += e->q[i][j][k];
+			same[x] += e->q[i][j][j];
+		}
 	}
 	if (pos <= 0) printf("ALL");
 	else printf("%d", pos);
+	printf("\tQ%d", (int)(-4.343 * log((sum[0]+sum[1]-same[0]-same[1]+1e-6) / (sum[0]+sum[1]+1e-6))));
 	for (i = 0; i < 2; ++i) {
 		printf("\t%lld", (long long)sum[i]);
 		for (j = 0; j < 4; ++j) {
@@ -54,13 +56,12 @@ static void print_stat(errstat_t *e, int pos, int qthres)
 			putchar('\t');
 			for (k = 0; k < 7; ++k)
 				if (j != k && k != 4) s += c[i][j][k];
-			for (k = 0; k < 7; ++k) {
-				if (k != 4) {
-					if (k) putchar(':');
-					if (j == k) printf("Q%d", (int)(-4.343 * log((s+1e-6) / (c[i][j][j]+s+1e-6))));
-					else printf("%.2d", (int)(100. * (c[i][j][k]+.25e-6) / (s+1e-6) + .499));
-				}
+			for (k = 0; k < 4; ++k) {
+				if (k) putchar(':');
+				if (j == k) printf("Q%d", (int)(-4.343 * log((s+1e-6) / (c[i][j][j]+s+1e-6))));
+				else printf("%.2d", (int)(100. * (c[i][j][k]+.25e-6) / (s+1e-6) + .499));
 			}
+			printf(":%.2d", (int)(100. * (c[i][j][5]+c[i][j][6]+.25e-6) / (s+1e-6) + .499));
 		}
 	}
 	putchar('\n');
@@ -84,7 +85,7 @@ static int read1_plp(void *data, bam1_t *b)
 int main_mapchk(int argc, char *argv[])
 {
 	int c, last_tid = -1, tid, pos, ref_len = 0, max_len = 0, max_alloc = 0, qthres = 20, n_plp;
-	double fthres = 0.4;
+	double fthres = 0.35;
 	const bam_pileup1_t *plp;
 	bam_mplp_t mplp;
 	char *ref = 0, *reg = 0;
