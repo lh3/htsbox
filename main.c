@@ -4,7 +4,7 @@
 #include <ctype.h>
 #include "vcf.h"
 
-#define HTSBOX_VERSION "r258"
+#define HTSBOX_VERSION "r259"
 
 int main_samview(int argc, char *argv[]);
 int main_vcfview(int argc, char *argv[]);
@@ -19,7 +19,6 @@ int main_pileup(int argc, char *argv[]);
 int main_faidx(int argc, char *argv[]);
 int main_razip(int argc, char *argv[]);
 int main_mapchk(int argc, char *argv[]);
-int main_mapchk2(int argc, char *argv[]);
 
 static int usage()
 {
@@ -57,7 +56,6 @@ int main(int argc, char *argv[])
 	else if (strcmp(argv[1], "abreak") == 0) return main_abreak(argc-1, argv+1);
 	else if (strcmp(argv[1], "pileup") == 0) return main_pileup(argc-1, argv+1);
 	else if (strcmp(argv[1], "mapchk") == 0) return main_mapchk(argc-1, argv+1);
-	else if (strcmp(argv[1], "mapchk2") == 0) return main_mapchk2(argc-1, argv+1);
 	else {
 		fprintf(stderr, "[E::%s] unrecognized command '%s'\n", __func__, argv[1]);
 		return 1;
