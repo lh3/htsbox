@@ -8,18 +8,19 @@ int main_samview(int argc, char *argv[])
 {
 	samFile *in;
 	char *fn_ref = 0;
-	int flag = 0, c, clevel = -1, ignore_sam_err = 0;
+	int flag = 0, i, c, clevel = -1, ignore_sam_err = 0, q20 = 0;
 	char moder[8];
 	bam_hdr_t *h;
 	bam1_t *b;
 
-	while ((c = getopt(argc, argv, "IbSl:t:")) >= 0) {
+	while ((c = getopt(argc, argv, "IbSl:t:Q")) >= 0) {
 		switch (c) {
 		case 'S': flag |= 1; break;
 		case 'b': flag |= 2; break;
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 't': fn_ref = optarg; break;
 		case 'I': ignore_sam_err = 1; break;
+		case 'Q': q20 = 1; break;
 		}
 	}
 	if (argc == optind) {
@@ -59,7 +60,16 @@ int main_samview(int argc, char *argv[])
 				hts_itr_destroy(iter);
 			}
 			hts_idx_destroy(idx);
-		} else while (sam_read1(in, h, b) >= 0) sam_write1(out, h, b);
+		} else {
+			while (sam_read1(in, h, b) >= 0) {
+				if (q20) {
+					uint8_t *qual = bam_get_qual(b);
+					for (i = 0; i < b->core.l_qseq; ++i)
+						qual[i] = qual[i] >= 20? 30 : 10;
+				}
+				sam_write1(out, h, b);
+			}
+		}
 		sam_close(out);
 	}
 
