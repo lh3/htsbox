@@ -51,7 +51,7 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 		diff = (double)nm / (m + ni + nd);
 		ksprintf(buf, "%.4f\t%d\tmm:%d;ins:%d,%d;del:%d,%d", diff, b->core.qual, nm - ni - nd, oi, ni, od, nd);
 		tag = bam_aux_get(b, "AS");
-		if (tag) ksprintf(buf, "score:%d", bam_aux2i(tag));
+		if (tag) ksprintf(buf, ";score:%d", bam_aux2i(tag));
 	}
 	puts(buf->s);
 }
