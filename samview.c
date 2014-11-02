@@ -2,29 +2,96 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include "sam.h"
+#include "kstring.h"
+
+static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
+{
+	buf->l = 0;
+	kputsn(bam_get_qname(b), b->core.l_qname - 1, buf);
+	if (b->core.flag>>6&3) {
+		kputc('/', buf);
+		kputc("0123"[b->core.flag>>6&3], buf);
+	}
+	kputc('\t', buf);
+	if ((b->core.flag & BAM_FUNMAP) || b->core.tid < 0 || b->core.n_cigar == 0) {
+		kputw(b->core.l_qseq, buf);
+		kputs("\t0\t0\t*\t*\t0\t0\t0\t1.0000\t0", buf);
+	} else {
+		const uint32_t *cigar = bam_get_cigar(b);
+		const uint8_t *tag;
+		int clip[2], k, m = 0, nm = 0, od = 0, oi = 0, os = 0, ns = 0, nd = 0, ni = 0, ql = 0, tl = 0, is_rev = !!bam_is_rev(b);
+		double diff;
+		clip[0] = clip[1] = 0;
+		for (k = 0; k < b->core.n_cigar; ++k) {
+			int op = bam_cigar_op(cigar[k]);
+			int l = bam_cigar_oplen(cigar[k]);
+			if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) m += l;
+			else if (op == BAM_CINS) ++oi, ni += l;
+			else if (op == BAM_CDEL) ++od, oi += l;
+			else if (op == BAM_CREF_SKIP) ++os, ns += l;
+			else if (op == BAM_CSOFT_CLIP || op == BAM_CHARD_CLIP) clip[!!k] = l;
+		}
+		tag = bam_aux_get(b, "NM");
+		nm = tag? bam_aux2i(tag) : 0;
+		if (nm < ni + oi) nm = ni + oi;
+
+		ql = clip[0] + m + ni + clip[1];
+		tl = h->target_len[b->core.tid];
+
+		kputw(ql, buf); kputc('\t', buf);
+		kputw(clip[is_rev], buf); kputc('\t', buf);
+		kputw(ql - clip[is_rev], buf); kputc('\t', buf);
+		kputc("+-"[is_rev], buf); kputc('\t', buf);
+		kputs(h->target_name[b->core.tid], buf); kputc('\t', buf);
+		kputw(tl, buf); kputc('\t', buf);
+		kputw(b->core.pos, buf); kputc('\t', buf);
+		kputw(b->core.pos + m + nd + ns, buf); kputc('\t', buf);
+		diff = (double)nm / (m + ni + nd);
+		ksprintf(buf, "%.4f\t%d\tmm:%d;ins:%d,%d;del:%d,%d", diff, b->core.qual, nm - ni - nd, oi, ni, od, nd);
+		tag = bam_aux_get(b, "AS");
+		if (tag) ksprintf(buf, "score:%d", bam_aux2i(tag));
+	}
+	puts(buf->s);
+}
+
+static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b)
+{
+	int i;
+	if (!(flag&4)) {
+		if (flag&8) {
+			uint8_t *qual = bam_get_qual(b);
+			for (i = 0; i < b->core.l_qseq; ++i)
+				qual[i] = qual[i] >= 20? 30 : 10;
+		}
+		sam_write1(out, h, b);
+	} else print_pas(h, b, buf);
+}
 
 int main_samview(int argc, char *argv[])
 {
 	samFile *in;
 	char *fn_ref = 0;
-	int flag = 0, i, c, clevel = -1, ignore_sam_err = 0, q20 = 0;
+	int flag = 0, c, clevel = -1, ignore_sam_err = 0;
 	char moder[8];
+	kstring_t buf = {0, 0, 0};
 	bam_hdr_t *h;
 	bam1_t *b;
 
-	while ((c = getopt(argc, argv, "IbSl:t:Q")) >= 0) {
+	while ((c = getopt(argc, argv, "IbpSl:t:Q")) >= 0) {
 		switch (c) {
 		case 'S': flag |= 1; break;
 		case 'b': flag |= 2; break;
+		case 'p': flag |= 4; break;
+		case 'Q': flag |= 8; break;
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 't': fn_ref = optarg; break;
 		case 'I': ignore_sam_err = 1; break;
-		case 'Q': q20 = 1; break;
 		}
 	}
 	if (argc == optind) {
-		fprintf(stderr, "Usage: samview [-bSI] [-l level] <in.bam>|<in.sam> [region]\n");
+		fprintf(stderr, "Usage: samview [-bSIp] [-l level] <in.bam>|<in.sam> [region]\n");
 		return 1;
 	}
 	strcpy(moder, "r");
@@ -35,14 +102,16 @@ int main_samview(int argc, char *argv[])
 	h->ignore_sam_err = ignore_sam_err;
 	b = bam_init1();
 
-	if ((flag&4) == 0) { // SAM/BAM output
-		htsFile *out;
+	{ // SAM/BAM output
+		htsFile *out = 0;
 		char modew[8];
 		strcpy(modew, "w");
 		if (clevel >= 0 && clevel <= 9) sprintf(modew + 1, "%d", clevel);
 		if (flag&2) strcat(modew, "b");
-		out = hts_open("-", modew, 0);
-		sam_hdr_write(out, h);
+		if (!(flag&4)) {
+			out = hts_open("-", modew, 0);
+			sam_hdr_write(out, h);
+		}
 		if (optind + 1 < argc && !(flag&1)) { // BAM input and has a region
 			int i;
 			hts_idx_t *idx;
@@ -56,23 +125,19 @@ int main_samview(int argc, char *argv[])
 					fprintf(stderr, "[E::%s] fail to parse region '%s'\n", __func__, argv[i]);
 					continue;
 				}
-				while (bam_itr_next((BGZF*)in->fp, iter, b) >= 0) sam_write1(out, h, b);
+				while (bam_itr_next((BGZF*)in->fp, iter, b) >= 0)
+					print_line(flag, out, &buf, h, b);
 				hts_itr_destroy(iter);
 			}
 			hts_idx_destroy(idx);
 		} else {
-			while (sam_read1(in, h, b) >= 0) {
-				if (q20) {
-					uint8_t *qual = bam_get_qual(b);
-					for (i = 0; i < b->core.l_qseq; ++i)
-						qual[i] = qual[i] >= 20? 30 : 10;
-				}
-				sam_write1(out, h, b);
-			}
+			while (sam_read1(in, h, b) >= 0)
+				print_line(flag, out, &buf, h, b);
 		}
-		sam_close(out);
+		if (out) sam_close(out);
 	}
 
+	free(buf.s);
 	bam_destroy1(b);
 	bam_hdr_destroy(h);
 	sam_close(in);
