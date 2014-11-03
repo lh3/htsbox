@@ -39,7 +39,6 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 
 		ql = clip[0] + m + ni + clip[1];
 		tl = h->target_len[b->core.tid];
-		printf("%d\n", ql);
 
 		kputw(ql, buf); kputc('\t', buf);
 		kputw(clip[is_rev], buf); kputc('\t', buf);
