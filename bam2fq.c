@@ -6,25 +6,28 @@
 #include "kstring.h"
 
 static int8_t seq_comp_table[16] = { 0, 8, 4, 12, 2, 10, 9, 14, 1, 6, 5, 13, 3, 11, 7, 15 };
+static char *copied_tags[] = { "RG", "BC", "QT", 0 };
 
 int main_bam2fq(int argc, char *argv[])
 {
 	BGZF *fp, *fpse = 0;
 	bam1_t *b;
 	uint8_t *buf;
-	int max_buf, c, has12 = 0, use_oq = 0;
+	int max_buf, c, has12 = 0, use_oq = 0, copy_tags = 0;
 	kstring_t str;
 	int64_t n_singletons = 0, n_reads = 0;
 	char last[512], *fnse = 0;
 
-	while ((c = getopt(argc, argv, "Oas:")) > 0)
+	while ((c = getopt(argc, argv, "Oats:")) > 0)
 		if (c == 'a') has12 = 1;
 		else if (c == 'O') use_oq = 1;
+		else if (c == 't') copy_tags = 1;
 		else if (c == 's') fnse = optarg;
 	if (argc == optind) {
 		fprintf(stderr, "\nUsage:   bam2fq [-a] [-s outSE] <in.bam>\n\n");
 		fprintf(stderr, "Options: -a        append /1 and /2 to the read name\n");
 		fprintf(stderr, "         -O        output quality in the OQ tag if present\n");
+		fprintf(stderr, "         -y        copy RG, BC and QT tags to the FASTQ header line\n");
 		fprintf(stderr, "         -s FILE   write singleton reads to FILE [assume single-end]\n");
 		fprintf(stderr, "\n");
 		return 1;
@@ -62,6 +65,17 @@ int main_bam2fq(int argc, char *argv[])
 		if (has12) {
 			kputc('/', &str);
 			kputw(b->core.flag>>6&3, &str);
+		}
+		if (copy_tags) {
+			for (i = 0; copied_tags[i]; ++i) {
+				uint8_t *s;
+				if ((s = bam_aux_get(b, copied_tags[i])) != 0) {
+					kputc('\t', &str);
+					kputsn(copied_tags[i], 2, &str);
+					kputsn(":Z:", 3, &str);
+					kputs(bam_aux2Z(s), &str);
+				}
+			}
 		}
 		kputc('\n', &str);
 		if (max_buf < qlen + 1) {
