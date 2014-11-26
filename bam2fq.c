@@ -27,7 +27,7 @@ int main_bam2fq(int argc, char *argv[])
 		fprintf(stderr, "\nUsage:   bam2fq [-a] [-s outSE] <in.bam>\n\n");
 		fprintf(stderr, "Options: -a        append /1 and /2 to the read name\n");
 		fprintf(stderr, "         -O        output quality in the OQ tag if present\n");
-		fprintf(stderr, "         -y        copy RG, BC and QT tags to the FASTQ header line\n");
+		fprintf(stderr, "         -t        copy RG, BC and QT tags to the FASTQ header line\n");
 		fprintf(stderr, "         -s FILE   write singleton reads to FILE [assume single-end]\n");
 		fprintf(stderr, "\n");
 		return 1;
