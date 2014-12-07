@@ -243,7 +243,7 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "[E::%s] option -F cannot be used with -d/-c\n", __func__);
 		return 1;
 	}
-	if (is_fa) var_only = show_cnt = 0;
+	if (is_fa) var_only = 0;
 	if (is_fa && min_sum_q == 0)
 		fprintf(stderr, "[W::%s] with option -F, setting a reasonable -s is highly recommended.\n", __func__);
 	if (is_vcf && fai == 0) {
@@ -405,7 +405,8 @@ int main_pileup(int argc, char *argv[])
 							sum_q_del += bam_get_qual(plp[0][j].b)[plp[0][j].qpos];
 					if (sum_q_del >= min_sum_q) is_ambi = 1;
 				} else is_ambi = 1;
-				for (i = c = 0; i < aux.n_a; ++i) c |= a[i].b, sum_dp += a[i].q;
+				//for (i = c = 0; i < aux.n_a; ++i) c |= a[i].b, sum_dp += a[i].q;
+				for (i = c = 0; i < aux.n_a; ++i) c |= a[i].b, sum_dp += show_cnt? 1 : a[i].q;
 				c = seq_nt16_str[c];
 				if (is_ambi) c = tolower(c);
 				aux.seq[pos - beg] = c;
