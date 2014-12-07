@@ -11,13 +11,18 @@
 #include "ksort.h"
 
 const char *hts_parse_reg(const char *s, int *beg, int *end);
+void *bed_read(const char *fn);
+int bed_overlap(const void *_h, const char *chr, int beg, int end);
+void bed_destroy(void *_h);
 
 typedef struct {     // auxiliary data structure
 	BGZF *fp;        // the file handler
 	hts_itr_t *itr;  // NULL if a region not specified
+	const bam_hdr_t *h;
 	int min_mapQ, min_len; // mapQ filter; length filter
 	int min_supp_len;
 	float div_coef;
+	void *bed;       // bedidx if not NULL
 } aux_t;
 
 // This function reads a BAM alignment from one BAM file.
@@ -26,19 +31,26 @@ static int read_bam(void *data, bam1_t *b) // read level filters better go here 
 	aux_t *aux = (aux_t*)data; // data in fact is a pointer to an auxiliary structure
 	int ret = aux->itr? bam_itr_next(aux->fp, aux->itr, b) : bam_read1(aux->fp, b);
 	if (ret < 0) return ret;
+	if (b->core.tid < 0) b->core.flag |= BAM_FUNMAP;
 	if (!(b->core.flag&BAM_FUNMAP)) {
 		if ((int)b->core.qual < aux->min_mapQ) {
 			b->core.flag |= BAM_FUNMAP;
-		} else if (aux->min_len > 0 || aux->min_supp_len > 0) {
-			int k, l;
+		} else if (aux->min_len > 0 || aux->min_supp_len > 0 || aux->bed) {
+			int k, qlen = 0, tlen = 0;
+			const char *chr = aux->h->target_name[b->core.tid];
 			const uint32_t *cigar = bam_get_cigar(b);
-			for (k = l = 0; k < b->core.n_cigar; ++k) { // compute the query length in the alignment
+			for (k = 0; k < b->core.n_cigar; ++k) { // compute the query length in the alignment
 				int op = bam_cigar_op(cigar[k]);
+				int oplen = bam_cigar_oplen(cigar[k]);
 				if ((bam_cigar_type(op)&1) && op != BAM_CSOFT_CLIP)
-					l += bam_cigar_oplen(cigar[k]);
+					qlen += oplen;
+				if (bam_cigar_type(op)&2)
+					tlen += oplen;
 			}
-			if (l < aux->min_len) b->core.flag |= BAM_FUNMAP;
-			if (l < aux->min_supp_len && (b->core.flag&BAM_FSUPP)) b->core.flag |= BAM_FUNMAP;
+			if (qlen < aux->min_len) b->core.flag |= BAM_FUNMAP;
+			if (qlen < aux->min_supp_len && (b->core.flag&BAM_FSUPP)) b->core.flag |= BAM_FUNMAP;
+			if (!(b->core.flag&BAM_FUNMAP) && !bed_overlap(aux->bed, chr, b->core.pos, b->core.pos + tlen))
+				b->core.flag |= BAM_FUNMAP;
 		}
 		if (!(b->core.flag&BAM_FUNMAP) && aux->div_coef < 1.) {
 			uint8_t *NM;
@@ -203,10 +215,12 @@ int main_pileup(int argc, char *argv[])
 	aux_t **data;
 	paux_t aux;
 	bam_mplp_t mplp;
+	void *bed = 0;
 
 	// parse the command line
-	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:u")) >= 0) {
+	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:ub:")) >= 0) {
 		if (n == 'f') fai = fai_load(optarg);
+		else if (n == 'b') bed = bed_read(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
 		else if (n == 'r') reg = strdup(optarg);   // parsing a region requires a BAM header
 		else if (n == 'Q') baseQ = atoi(optarg);   // base quality threshold
@@ -245,10 +259,12 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "         -Q INT     minimum base quality [%d]\n", baseQ);
 		fprintf(stderr, "         -s INT     drop alleles with sum of quality below INT [%d]\n", min_sum_q);
 		fprintf(stderr, "         -r STR     region [null]\n");
+		fprintf(stderr, "         -b FILE    BED or position list file to include [null]\n");
 		fprintf(stderr, "         -S INT     minimum supplementary alignment length\n");
 		fprintf(stderr, "         -v         show variants only\n");
 		fprintf(stderr, "         -c         output in the VCF format (force -v)\n");
 		fprintf(stderr, "         -F         output the consensus in FASTA\n");
+		fprintf(stderr, "         -C         show count of each allele on both strands\n");
 		fprintf(stderr, "         -u         unitig calling mode (-V.01 -S300 -q20 -Q3 -s5)\n");
 		fprintf(stderr, "         -D FLOAT   soft mask if sumQ > avgSum+FLOAT*sqrt(avgSum) (force -F) [%.2f]\n", max_dev);
 		fprintf(stderr, "\n");
@@ -278,6 +294,7 @@ int main_pileup(int argc, char *argv[])
 		data[i]->min_len  = min_len;                  // set the qlen filter
 		data[i]->div_coef = div_coef;
 		data[i]->min_supp_len = min_supp_len;
+		data[i]->bed = bed;
 		htmp = bam_hdr_read(data[i]->fp);             // read the BAM header
 		if (i == 0 && chr_end) {
 			char c = *chr_end;
@@ -292,6 +309,7 @@ int main_pileup(int argc, char *argv[])
 			data[i]->itr = bam_itr_queryi(idx, tid, beg, end); // set the iterator
 			hts_idx_destroy(idx); // the index is not needed any more; phase out of the memory
 		}
+		data[i]->h = h;
 	}
 
 	// the core multi-pileup loop
@@ -313,6 +331,7 @@ int main_pileup(int argc, char *argv[])
 	}
 	while (bam_mplp_auto(mplp, &tid, &pos, n_plp, plp) > 0) { // come to the next covered position
 		if (pos < beg || pos >= end) continue; // out of range; skip
+		if (bed && !bed_overlap(bed, h->target_name[tid], pos, pos + 1)) continue; // not overlapping BED
 		for (i = aux.tot_dp = 0; i < n; ++i) aux.tot_dp += n_plp[i];
 		if (last_tid != tid) {
 			if (is_fa && last_tid >= 0)
@@ -370,7 +389,7 @@ int main_pileup(int argc, char *argv[])
 			}
 
 			if (var_only && aux.n_alleles == 1 && a[0].hash>>63 == 0) continue; // var_only mode, but no ALT allele; skip
-			if (is_fa) {
+			if (is_fa) { // FASTA output
 				int sum_q_del, c, is_ambi = 0, sum_dp = 0;
 				if (pos - beg >= aux.max_len) { // expand arrays
 					aux.max_len = pos - beg + 1;
@@ -470,5 +489,6 @@ int main_pileup(int argc, char *argv[])
 	free(aux.cnt_b); free(aux.cnt_q); free(aux.a);
 	free(aux.seq); free(aux.depth);
 	free(data); free(reg);
+	if (bed) bed_destroy(bed);
 	return 0;
 }
