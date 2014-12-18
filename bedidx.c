@@ -34,7 +34,7 @@ int *bed_index_core(int n, uint64_t *a, int *n_idx)
 			int oldm = m;
 			m = end + 1;
 			kroundup32(m);
-			idx = realloc(idx, m * sizeof(int));
+			idx = (int*)realloc(idx, m * sizeof(int));
 			for (j = oldm; j < m; ++j) idx[j] = -1;
 		}
 		if (beg == end) {
@@ -102,7 +102,7 @@ void *bed_read(const char *fn)
 	// read the list
 	fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(fileno(stdin), "r");
 	if (fp == 0) return 0;
-	str = calloc(1, sizeof(kstring_t));
+	str = (kstring_t*)calloc(1, sizeof(kstring_t));
 	ks = ks_init(fp);
 	while (ks_getuntil(ks, 0, str, &dret) >= 0) { // read the chr name
 		int beg = -1, end = -1;
@@ -131,7 +131,7 @@ void *bed_read(const char *fn)
 		if (beg >= 0 && end > beg) {
 			if (p->n == p->m) {
 				p->m = p->m? p->m<<1 : 4;
-				p->a = realloc(p->a, p->m * 8);
+				p->a = (uint64_t*)realloc(p->a, p->m * 8);
 			}
 			p->a[p->n++] = (uint64_t)beg<<32 | end;
 		}
