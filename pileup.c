@@ -92,7 +92,7 @@ typedef struct {
 #define allele_lt(a, b) ((a).hash < (b).hash || ((a).hash == (b).hash && (a).indel < (b).indel))
 KSORT_INIT(allele, allele_t, allele_lt)
 
-static inline allele_t pileup2allele(const bam_pileup1_t *p, int min_baseQ, uint64_t pos, int ref)
+static inline allele_t pileup2allele(const bam_pileup1_t *p, int min_baseQ, uint64_t pos, int ref, int trim_len)
 { // collect allele information given a pileup1 record
 	allele_t a;
 	int i;
@@ -100,6 +100,7 @@ static inline allele_t pileup2allele(const bam_pileup1_t *p, int min_baseQ, uint
 	a.q = bam_get_qual(p->b)[p->qpos];
 	a.is_rev = bam_is_rev(p->b);
 	a.is_skip = (p->is_del || p->is_refskip || a.q < min_baseQ);
+	if (p->qpos < trim_len || p->b->core.l_qseq - p->qpos < trim_len) a.is_skip = 1;
 	a.indel = p->indel;
 	a.b = a.hash = bam_seqi(seq, p->qpos);
 	a.pos = pos;
@@ -206,7 +207,7 @@ static void write_fa(paux_t *a, const char *name, int beg, float max_dev)
 int main_pileup(int argc, char *argv[])
 {
 	int i, j, n, tid, beg, end, pos, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_support = 1, min_supp_len = 0;
-	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0;
+	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0, majority_fa = 0, trim_len = 0;
 	int last_tid, last_pos;
 	float max_dev = 3.0, div_coef = 1.;
 	const bam_pileup1_t **plp;
@@ -219,7 +220,7 @@ int main_pileup(int argc, char *argv[])
 	void *bed = 0;
 
 	// parse the command line
-	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:ub:")) >= 0) {
+	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:uMb:T:")) >= 0) {
 		if (n == 'f') fai = fai_load(optarg);
 		else if (n == 'b') bed = bed_read(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
@@ -235,6 +236,8 @@ int main_pileup(int argc, char *argv[])
 		else if (n == 'C') show_2strand = 1;
 		else if (n == 'D') max_dev = atof(optarg), is_fa = 1;
 		else if (n == 'F') is_fa = 1;
+		else if (n == 'M') majority_fa = is_fa = 1;
+		else if (n == 'T') trim_len = atoi(optarg);
 		else if (n == 'u') {
 			baseQ = 3; mapQ = 20; qual_as_depth = 1;
 			min_supp_len = 300; min_support = 5; div_coef = .01;
@@ -246,7 +249,7 @@ int main_pileup(int argc, char *argv[])
 		return 1;
 	}
 	if (is_fa) var_only = 0;
-	if (is_fa && min_support <= 1)
+	if (is_fa && !majority_fa && min_support <= 1)
 		fprintf(stderr, "[W::%s] with option -F, setting a reasonable -s is highly recommended.\n", __func__);
 	if (is_vcf && fai == 0) {
 		fprintf(stderr, "[E::%s] with option -c, the reference genome must be provided.\n", __func__);
@@ -263,6 +266,7 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "         -l INT     minimum query length [%d]\n", min_len);
 		fprintf(stderr, "         -S INT     minimum supplementary alignment length [0]\n");
 		fprintf(stderr, "         -V FLOAT   ignore queries with per-base divergence >FLOAT [1]\n");
+		fprintf(stderr, "         -T INT     ignore bases within INT-bp from either end of a read [0]\n");
 		fprintf(stderr, "         -d         base quality as depth\n");
 		fprintf(stderr, "         -s INT     drop alleles with depth<INT [%d]\n", min_support);
 		fprintf(stderr, "\n");
@@ -271,6 +275,7 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "         -C         show count of each allele on both strands\n");
 		fprintf(stderr, "\n");
 		fprintf(stderr, "         -F         output the consensus in FASTA\n");
+		fprintf(stderr, "         -M         majority FASTA (force -F)\n");
 		fprintf(stderr, "         -D FLOAT   soft mask if sumQ > avgSum+FLOAT*sqrt(avgSum) (force -F) [%.2f]\n", max_dev);
 		fprintf(stderr, "\n");
 		fprintf(stderr, "         -u         unitig calling mode (-d -V.01 -S300 -q20 -Q3 -s5)\n");
@@ -284,6 +289,7 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "[W::%s] with option -F, only the first input file is used.\n", __func__);
 		n = 1;
 	}
+	srand48(11);
 	data = (aux_t**)calloc(n, sizeof(aux_t*)); // data[i] for the i-th input
 	beg = 0; end = 1<<30; tid = -1;  // set the default region
 	if (reg) {
@@ -361,7 +367,7 @@ int main_pileup(int argc, char *argv[])
 			r = (ref && pos - beg < l_ref)? seq_nt16_table[(int)ref[pos - beg]] : 15; // the reference allele
 			for (i = aux.n_a = 0; i < n; ++i)
 				for (j = 0; j < n_plp[i]; ++j) {
-					a[aux.n_a] = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j, r);
+					a[aux.n_a] = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j, r, trim_len);
 					if (!a[aux.n_a].is_skip) ++aux.n_a;
 				}
 			if (aux.n_a == 0) continue; // no reads are good enough; zero effective coverage
@@ -389,13 +395,27 @@ int main_pileup(int argc, char *argv[])
 				}
 				for (i = last_pos + 1; i < pos; ++i) // fill gaps
 					aux.seq[i - beg] = 'n', aux.depth[i - beg] = 0;
-				if (aux.n_alleles <= 2) {
-					for (j = del_supp = 0; j < n_plp[0]; ++j) // count reads supporting a deletion at this position
-						if (plp[0][j].is_del)
-							del_supp += qual_as_depth? bam_get_qual(plp[0][j].b)[plp[0][j].qpos] : 1;
+				for (j = del_supp = 0; j < n_plp[0]; ++j) // count reads supporting a deletion at this position
+					if (plp[0][j].is_del)
+						del_supp += qual_as_depth? bam_get_qual(plp[0][j].b)[plp[0][j].qpos] : 1;
+				if (majority_fa) {
+					int max = 0, max2 = 0, max_k = -1, max2_k = -1;
+					for (k = 0; k < aux.n_alleles; ++k)
+						if (aux.support[k] > max) max2 = max, max2_k = max_k, max = aux.support[k], max_k = k;
+						else if (aux.support[k] > max2) max2 = aux.support[k], max2_k = k;
+					if (max == max2 && drand48() < .5) max = max2, max_k = max2_k;
+					for (i = 0; i < aux.n_a; ++i)
+						if (a[i].k == max_k) break;
+					assert(i < aux.n_a);
+					c = a[i].b;
+					if (c != 1 && c != 2 && c != 4 && c != 8) c = 15, is_ambi = 1;
+					if (del_supp > max) is_ambi = 1;
+				} else {
 					if (del_supp >= min_support) is_ambi = 1;
-				} else is_ambi = 1;
-				for (i = c = 0; i < aux.n_a; ++i) c |= a[i].b, sum_dp += qual_as_depth? a[i].q : 1;
+					if (aux.n_alleles > 2) is_ambi = 1;
+					for (i = c = 0; i < aux.n_a; ++i) c |= a[i].b;
+				}
+				for (i = 0; i < aux.n_a; ++i) sum_dp += qual_as_depth? a[i].q : 1;
 				c = seq_nt16_str[c];
 				if (is_ambi) c = tolower(c);
 				aux.seq[pos - beg] = c;
