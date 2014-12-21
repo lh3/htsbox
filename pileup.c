@@ -97,6 +97,7 @@ static inline allele_t pileup2allele(const bam_pileup1_t *p, int min_baseQ, uint
 	allele_t a;
 	int i;
 	const uint8_t *seq = bam_get_seq(p->b);
+	a.k = (1<<18)-1; // this will be set in count_alleles()
 	a.q = bam_get_qual(p->b)[p->qpos];
 	a.is_rev = bam_is_rev(p->b);
 	a.is_skip = (p->is_del || p->is_refskip || a.q < min_baseQ);
