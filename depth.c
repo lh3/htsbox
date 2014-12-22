@@ -21,7 +21,7 @@ static inline void print_counts(counter_t *cnt, const char *ctg)
 int main_depth(int argc, char *argv[])
 {
 	int c, qthres = 20;
-	int n, tid, pos, upper, lower, last_tid = -1, last_pos = -2, i;
+	int n, tid, pos, upper = -1, lower = -1, last_tid = -1, last_pos = -2, i;
 	double pc = 0.2;
 	counter_t cnt;
 	BGZF *fp;
