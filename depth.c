@@ -13,7 +13,7 @@ static counter_t null_count = { 0, 0, 0, 0, 0 };
 static inline void print_counts(counter_t *cnt, const char *ctg)
 {
 	if (cnt->cnt)
-		printf("%s\t%d\t%d\t%.2f\t%.2f\n", ctg, cnt->start, cnt->start + cnt->cnt,
+		printf("%s\t%d\t%d\t%.2f\t%.2f\n", ctg, cnt->start, cnt->cnt,
 			   (double)cnt->sum_all / cnt->cnt, (double)cnt->sum_high / cnt->cnt);
 	*cnt = null_count;
 }
