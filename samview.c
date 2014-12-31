@@ -6,6 +6,9 @@
 #include "sam.h"
 #include "kstring.h"
 
+void *bed_read(const char *fn);
+int bed_overlap(const void *_h, const char *chr, int beg, int end);
+
 static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 {
 	buf->l = 0;
@@ -56,10 +59,22 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 	puts(buf->s);
 }
 
-static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b)
+static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b, const void *bed)
 {
 	int i;
 	if (!(flag&4)) {
+		if (bed) {
+			int n[16], k;
+			const uint32_t *cigar;
+			const bam1_core_t *c = &b->core;
+			if (b->core.tid < 0) return;
+			memset(n, 0, 16 * sizeof(int));
+			cigar = bam_get_cigar(b);
+			for (k = 0; k < c->n_cigar; ++k)
+				n[bam_cigar_op(cigar[k])] += bam_cigar_oplen(cigar[k]);
+			if (!bed_overlap(bed, h->target_name[c->tid], c->pos, c->pos + n[0] + n[2] + n[3] + n[7] + n[8]))
+				return;
+		}
 		if (flag&8) {
 			uint8_t *qual = bam_get_qual(b);
 			for (i = 0; i < b->core.l_qseq; ++i)
@@ -75,11 +90,12 @@ int main_samview(int argc, char *argv[])
 	char *fn_ref = 0;
 	int flag = 0, c, clevel = -1, ignore_sam_err = 0;
 	char moder[8];
+	void *bed = 0;
 	kstring_t buf = {0, 0, 0};
 	bam_hdr_t *h;
 	bam1_t *b;
 
-	while ((c = getopt(argc, argv, "IbpSl:t:Q")) >= 0) {
+	while ((c = getopt(argc, argv, "IbpSl:t:QL:")) >= 0) {
 		switch (c) {
 		case 'S': flag |= 1; break;
 		case 'b': flag |= 2; break;
@@ -88,10 +104,11 @@ int main_samview(int argc, char *argv[])
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 't': fn_ref = optarg; break;
 		case 'I': ignore_sam_err = 1; break;
+		case 'L': bed = bed_read(optarg); break;
 		}
 	}
 	if (argc == optind) {
-		fprintf(stderr, "Usage: samview [-bSIp] [-l level] <in.bam>|<in.sam> [region]\n");
+		fprintf(stderr, "Usage: samview [-bSIp] [-L reg.bed] [-l level] <in.bam>|<in.sam> [region]\n");
 		return 1;
 	}
 	strcpy(moder, "r");
@@ -126,13 +143,13 @@ int main_samview(int argc, char *argv[])
 					continue;
 				}
 				while (bam_itr_next((BGZF*)in->fp, iter, b) >= 0)
-					print_line(flag, out, &buf, h, b);
+					print_line(flag, out, &buf, h, b, bed);
 				hts_itr_destroy(iter);
 			}
 			hts_idx_destroy(idx);
 		} else {
 			while (sam_read1(in, h, b) >= 0)
-				print_line(flag, out, &buf, h, b);
+				print_line(flag, out, &buf, h, b, bed);
 		}
 		if (out) sam_close(out);
 	}
