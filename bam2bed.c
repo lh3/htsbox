@@ -39,6 +39,10 @@ int main_bam2bed(int argc, char *argv[])
 		kputc('\t', &str); kputw(c->pos, &str);
 		kputc('\t', &str); kputw(c->pos + n[0] + n[2] + n[3] + n[7] + n[8], &str);
 		kputc('\t', &str); kputs(bam_get_qname(b), &str);
+		if (c->flag&1) {
+			kputc('/', &str);
+			kputc("0123"[c->flag>>6&3], &str);
+		}
 		kputc('\t', &str); kputw(c->qual, &str);
 		kputc('\t', &str); kputc(bam_is_rev(b)? '-' : '+', &str);
 		if (is_ext) {
