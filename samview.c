@@ -80,6 +80,10 @@ static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *
 			for (i = 0; i < b->core.l_qseq; ++i)
 				qual[i] = qual[i] >= 20? 30 : 10;
 		}
+		if (flag&16) {
+			uint8_t *qual = bam_get_qual(b);
+			for (i = 0; i < b->core.l_qseq; ++i) qual[i] = 25;
+		}
 		sam_write1(out, h, b);
 	} else print_pas(h, b, buf);
 }
@@ -95,12 +99,13 @@ int main_samview(int argc, char *argv[])
 	bam_hdr_t *h;
 	bam1_t *b;
 
-	while ((c = getopt(argc, argv, "IbpSl:t:QL:")) >= 0) {
+	while ((c = getopt(argc, argv, "IbpSl:t:QUL:")) >= 0) {
 		switch (c) {
 		case 'S': flag |= 1; break;
 		case 'b': flag |= 2; break;
 		case 'p': flag |= 4; break;
-		case 'Q': flag |= 8; break;
+		case 'Q': flag |= 8; break; // 1-bit quality (<Q20 to Q10; >=Q20 to Q30)
+		case 'U': flag |= 16; break; // no quality (to Q25)
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 't': fn_ref = optarg; break;
 		case 'I': ignore_sam_err = 1; break;
