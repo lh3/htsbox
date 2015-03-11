@@ -20,6 +20,7 @@ int main_faidx(int argc, char *argv[]);
 int main_razip(int argc, char *argv[]);
 int main_mapchk(int argc, char *argv[]);
 int main_depth(int argc, char *argv[]);
+int main_genreg(int argc, char *argv[]);
 
 static int usage()
 {
@@ -58,6 +59,7 @@ int main(int argc, char *argv[])
 	else if (strcmp(argv[1], "pileup") == 0) return main_pileup(argc-1, argv+1);
 	else if (strcmp(argv[1], "mapchk") == 0) return main_mapchk(argc-1, argv+1);
 	else if (strcmp(argv[1], "depth") == 0) return main_depth(argc-1, argv+1);
+	else if (strcmp(argv[1], "genreg") == 0) return main_genreg(argc-1, argv+1);
 	else {
 		fprintf(stderr, "[E::%s] unrecognized command '%s'\n", __func__, argv[1]);
 		return 1;
