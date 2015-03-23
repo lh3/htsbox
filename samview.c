@@ -32,7 +32,7 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 			int l = bam_cigar_oplen(cigar[k]);
 			if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) m += l;
 			else if (op == BAM_CINS) ++oi, ni += l;
-			else if (op == BAM_CDEL) ++od, oi += l;
+			else if (op == BAM_CDEL) ++od, nd += l;
 			else if (op == BAM_CREF_SKIP) ++os, ns += l;
 			else if (op == BAM_CSOFT_CLIP || op == BAM_CHARD_CLIP) clip[!!k] = l;
 		}
