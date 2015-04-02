@@ -800,6 +800,7 @@ void razf_close(RAZF *rz){
 	if(rz->mode == 'w'){
 #ifndef _RZ_READONLY
 		razf_end_flush(rz);
+		add_zindex(rz, rz->in, rz->out);
 		deflateEnd(rz->stream);
 #ifdef _USE_KNETFILE
 		save_zindex(rz, rz->x.fpw);
