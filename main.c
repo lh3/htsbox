@@ -4,7 +4,7 @@
 #include <ctype.h>
 #include "vcf.h"
 
-#define HTSBOX_VERSION "r285"
+#define HTSBOX_VERSION "r286"
 
 int main_samview(int argc, char *argv[]);
 int main_vcfview(int argc, char *argv[]);
@@ -21,6 +21,7 @@ int main_razip(int argc, char *argv[]);
 int main_mapchk(int argc, char *argv[]);
 int main_depth(int argc, char *argv[]);
 int main_genreg(int argc, char *argv[]);
+int main_qualbin(int argc, char *argv[]);
 
 static int usage()
 {
@@ -36,6 +37,7 @@ static int usage()
 	fprintf(stderr, "         bamshuf      shuffle BAM and group alignments by query name\n");
 	fprintf(stderr, "         bam2fq       convert name grouped BAM to interleaved fastq\n");
 	fprintf(stderr, "         bam2bed      BAM->BED conversion\n");
+	fprintf(stderr, "         qualbin      quality binning\n");
 	fprintf(stderr, "         pileup       summary pileup\n");
 	fprintf(stderr, "         abreak       summarize assembly break points\n");
 	fprintf(stderr, "\n");
@@ -60,6 +62,7 @@ int main(int argc, char *argv[])
 	else if (strcmp(argv[1], "mapchk") == 0) return main_mapchk(argc-1, argv+1);
 	else if (strcmp(argv[1], "depth") == 0) return main_depth(argc-1, argv+1);
 	else if (strcmp(argv[1], "genreg") == 0) return main_genreg(argc-1, argv+1);
+	else if (strcmp(argv[1], "qualbin") == 0) return main_qualbin(argc-1, argv+1);
 	else {
 		fprintf(stderr, "[E::%s] unrecognized command '%s'\n", __func__, argv[1]);
 		return 1;
