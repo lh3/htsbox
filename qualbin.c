@@ -118,7 +118,9 @@ static void qz_alter(qz_record_t *r, int mode)
 	} else if (mode == 1) {
 		for (i = 0; i < l; ++i) qual[i] = 25;
 	} else if (mode == 0) {
-		for (i = 0; i < l; ++i) qual[i] = 255;
+		if (!r->b) {
+			free(r->qual); r->qual = 0;
+		} else for (i = 0; i < l; ++i) qual[i] = 255;
 	} else if (mode == 7) { // see Table 1 in "Reducing Whole-Genome Data Storage Footprint"
 		for (i = 0; i < l; ++i) {
 			if (qual[i] < 2) {} // do nothing
