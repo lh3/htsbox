@@ -6,14 +6,6 @@
 #include "sam.h"
 #include "kstring.h"
 
-#define QUAL_ALL  0
-#define QUAL_1    1
-#define QUAL_2    2
-#define QUAL_7    3
-#define QUAL_NO   4
-
-static int g_qual_res = QUAL_ALL;
-
 void *bed_read(const char *fn);
 int bed_overlap(const void *_h, const char *chr, int beg, int end);
 
@@ -69,7 +61,6 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 
 static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b, const void *bed)
 {
-	int i;
 	if (!(flag&4)) {
 		if (bed) {
 			int n[16], k;
@@ -82,28 +73,6 @@ static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *
 				n[bam_cigar_op(cigar[k])] += bam_cigar_oplen(cigar[k]);
 			if (!bed_overlap(bed, h->target_name[c->tid], c->pos, c->pos + n[0] + n[2] + n[3] + n[7] + n[8]))
 				return;
-		}
-		if (g_qual_res == QUAL_2) {
-			uint8_t *qual = bam_get_qual(b);
-			for (i = 0; i < b->core.l_qseq; ++i)
-				qual[i] = qual[i] >= 20? 30 : 10;
-		} else if (g_qual_res == QUAL_1) {
-			uint8_t *qual = bam_get_qual(b);
-			for (i = 0; i < b->core.l_qseq; ++i) qual[i] = 25;
-		} else if (g_qual_res == QUAL_NO) {
-			uint8_t *qual = bam_get_qual(b);
-			for (i = 0; i < b->core.l_qseq; ++i) qual[i] = 255;
-		} else if (g_qual_res == QUAL_7) { // see Table 1 in "Reducing Whole-Genome Data Storage Footprint"
-			uint8_t *qual = bam_get_qual(b);
-			for (i = 0; i < b->core.l_qseq; ++i) {
-				if (qual[i] < 2) {} // do nothing
-				else if (qual[i] < 10) qual[i] = 6;
-				else if (qual[i] < 20) qual[i] = 15;
-				else if (qual[i] < 25) qual[i] = 22;
-				else if (qual[i] < 30) qual[i] = 27;
-				else if (qual[i] < 40) qual[i] = 37;
-				else qual[i] = 40;
-			}
 		}
 		sam_write1(out, h, b);
 	} else print_pas(h, b, buf);
@@ -120,18 +89,11 @@ int main_samview(int argc, char *argv[])
 	bam_hdr_t *h;
 	bam1_t *b;
 
-	while ((c = getopt(argc, argv, "IbpSl:t:Q:UL:")) >= 0) {
+	while ((c = getopt(argc, argv, "IbpSl:t:UL:")) >= 0) {
 		switch (c) {
 		case 'S': flag |= 1; break;
 		case 'b': flag |= 2; break;
 		case 'p': flag |= 4; break;
-		case 'Q':
-			if (strcmp(optarg, "1") == 0) g_qual_res = QUAL_1;
-			else if (strcmp(optarg, "2") == 0) g_qual_res = QUAL_2;
-			else if (strcmp(optarg, "7") == 0) g_qual_res = QUAL_7;
-			else if (strcmp(optarg, "0") == 0) g_qual_res = QUAL_NO;
-			else fprintf(stderr, "[W::%s] valid values for -Q include 0, 1, 2 and 7.\n", __func__);
-			break;
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 't': fn_ref = optarg; break;
 		case 'I': ignore_sam_err = 1; break;
