@@ -5,7 +5,7 @@
 #include "ksort.h"
 
 typedef struct {
-	int is_bam, print_bp, min_len, min_alen, min_q, max_gap;
+	int is_bam, print_bp, min_len, min_sc, min_q, max_gap;
 	float mask_level;
 } cmdopt_t;
 
@@ -17,7 +17,7 @@ typedef struct {
 } stat_t;
 
 typedef struct {
-	int tid, pos, len, qlen, rlen, flag, mapq, qbeg, clip[2], ins, del, nm;
+	int tid, pos, len, qlen, rlen, flag, mapq, qbeg, clip[2], ins, del, nm, score;
 	double diff;
 } aln_t;
 
@@ -61,13 +61,13 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 	printf(">%s\n", name);
 	for (i = 0; i < n_aa; ++i) {
 		aln_t *p = &aa[i];
-		printf("#\t%d\t%d\t%c\t%s\t%d\t%d\t%d\t%.4f\n", p->qbeg, p->qbeg + p->qlen, "+-"[p->flag>>4&1],
-				h->target_name[p->tid], p->pos, p->pos + p->rlen, p->mapq, p->diff);
+		printf("#\t%d\t%d\t%c\t%s\t%d\t%d\t%d\t%.4f\t%d\n", p->qbeg, p->qbeg + p->qlen, "+-"[p->flag>>4&1],
+				h->target_name[p->tid], p->pos, p->pos + p->rlen, p->mapq, p->diff, p->score);
 	}
 	for (i = 1; i < n_aa; ++i) {
 		aln_t *q = &aa[i-1], *p = &aa[i];
-		int min_len = q->qlen < p->qlen? q->qlen : p->qlen;
 		int min_mapq = q->mapq < p->mapq? q->mapq : p->mapq;
+		int min_sc = q->score < p->score? q->score : p->score;
 		int qgap = p->qbeg - (q->qbeg + q->qlen);
 		int qt_end, pt_start;
 		char type;
@@ -84,7 +84,7 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 		printf("%c\t%s\t%d\t%c\t%s\t%d\t%c\t%d\t%d\t%d\n", type, 
 				h->target_name[q->tid], qt_end, "+-"[!!(q->flag&16)],
 				h->target_name[p->tid], pt_start, "+-"[!!(p->flag&16)],
-				qgap, min_mapq, min_len);
+				qgap, min_mapq, min_sc);
 	}
 }
 
@@ -169,11 +169,12 @@ int main_abreak(int argc, char *argv[])
 	memset(&last, 0, sizeof(kstring_t));
 	memset(&out, 0, sizeof(kstring_t));
 	memset(&o, 0, sizeof(cmdopt_t));
-	o.min_len = 150; o.min_alen = 0; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500;
-	while ((c = getopt(argc, argv, "a:l:bq:m:g:p")) >= 0)
+	o.min_len = 150; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500;
+	while ((c = getopt(argc, argv, "ul:bq:m:g:ps:")) >= 0)
 		if (c == 'b') o.is_bam = 1;
+		else if (c == 'u') o.print_bp = 1, o.min_sc = 100, o.min_q = 30;
 		else if (c == 'p') o.print_bp = 1;
-		else if (c == 'a') o.min_alen = atoi(optarg);
+		else if (c == 's') o.min_sc = atoi(optarg);
 		else if (c == 'l') o.min_len = atoi(optarg);
 		else if (c == 'q') o.min_q = atoi(optarg);
 		else if (c == 'm') o.mask_level = atof(optarg);
@@ -183,15 +184,16 @@ int main_abreak(int argc, char *argv[])
 		fprintf(stderr, "Usage:   htscmd abreak [options] <aln.sam>|<aln.bam>\n\n");
 		fprintf(stderr, "Options: -b        assume the input is BAM (default is SAM)\n");
 		fprintf(stderr, "         -l INT    exclude contigs shorter than INT [%d]\n", o.min_len);
-		fprintf(stderr, "         -a INT    exclude alignment shorter than INT [%d]\n", o.min_alen);
+		fprintf(stderr, "         -s INT    exclude alignemnts with score less than INT [%d]\n", o.min_sc);
 		fprintf(stderr, "         -q INT    exclude alignments with mapQ below INT [%d]\n", o.min_q);
-		fprintf(stderr, "         -p        print break points\n\n");
+		fprintf(stderr, "         -p        print break points\n");
+		fprintf(stderr, "         -u        unitig SV calling mode (-pq30 -s100)\n\n");
 		fprintf(stderr, "         -m FLOAT  exclude aln overlapping another long aln by FLOAT fraction (effective w/o -p) [%g]\n", o.mask_level);
 		fprintf(stderr, "         -g INT    join alignments separated by a gap shorter than INT bp (effective w/o -p) [%d]\n\n", o.max_gap);
 		fprintf(stderr, "Note: recommended BWA-MEM setting is '-x intractg'. In the output:\n\n");
 		fprintf(stderr, "        >qName\n");
-		fprintf(stderr, "        #      qStart  qEnd   strand   tName   tStart  tEnd     mapQ     perBaseDiv\n");
-		fprintf(stderr, "        [A-Z]  tName1  tEnd1  strand1  tName2  tEnd2   strand2  qGapLen  minMapQ     minFlankLen\n\n");
+		fprintf(stderr, "        #      qStart  qEnd   strand   tName   tStart  tEnd     mapQ     perBaseDiv  alnScore\n");
+		fprintf(stderr, "        [A-Z]  tName1  tEnd1  strand1  tName2  tEnd2   strand2  qGapLen  minMapQ     minFlankScore\n\n");
 		return 1;
 	}
 
@@ -200,7 +202,7 @@ int main_abreak(int argc, char *argv[])
 	b = bam_init1();
 	while (sam_read1(in, h, b) >= 0) {
 		uint32_t *cigar = bam_get_cigar(b);
-		uint8_t *nm = 0;
+		uint8_t *tmp = 0;
 		if (last.s == 0 || strcmp(last.s, bam_get_qname(b))) {
 			if (last.s) analyze_aln(n_aa, aa, &s, &o, h, last.s);
 			last.l = 0;
@@ -222,11 +224,12 @@ int main_abreak(int argc, char *argv[])
 		if (a.len == 0) a.len = b->core.l_qseq;
 		a.tid = b->core.tid; a.pos = b->core.pos; a.flag = b->core.flag; a.mapq = b->core.qual;
 		a.qbeg = a.clip[!!(a.flag&BAM_FREVERSE)];
-		if ((nm = bam_aux_get(b, "NM")) != 0) {
-			a.nm = bam_aux2i(nm);
+		if ((tmp = bam_aux_get(b, "NM")) != 0) {
+			a.nm = bam_aux2i(tmp);
 			a.diff = (double)a.nm / (a.qlen + a.del);
 		} else a.nm = -1, a.diff = -1.;
-		if (a.len >= o.min_len && a.qlen + a.del >= o.min_alen) {
+		a.score = (tmp = bam_aux_get(b, "AS")) != 0? bam_aux2i(tmp) : a.qlen - a.ins; // if "AS" absent, use the total "M" length as score
+		if (a.len >= o.min_len && a.score >= o.min_sc) {
 			if (n_aa == m_aa) {
 				m_aa = m_aa? m_aa<<1 : 8;
 				aa = (aln_t*)realloc(aa, sizeof(aln_t) * m_aa);
