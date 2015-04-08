@@ -81,10 +81,15 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 				type = q->pos >= p->pos? 'C' : pt_start - qt_end > qgap? 'D' : 'I';
 			} else type = 'V';
 		} else type = 'X';
-		printf("%c\t%s\t%d\t%c\t%s\t%d\t%c\t%d\t%d\t%d\n", type, 
-				h->target_name[q->tid], qt_end, "+-"[!!(q->flag&16)],
-				h->target_name[p->tid], pt_start, "+-"[!!(p->flag&16)],
-				qgap, min_mapq, min_sc);
+		if (type == 'D' || type == 'I') {
+			printf("%c\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n", type, h->target_name[q->tid], qt_end, pt_start,
+					qgap - (pt_start - qt_end), qgap, min_mapq, min_sc);
+		} else {
+			printf("%c\t%s\t%d\t%c\t%s\t%d\t%c\t%d\t%d\t%d\n", type, 
+					h->target_name[q->tid], qt_end, "+-"[!!(q->flag&16)],
+					h->target_name[p->tid], pt_start, "+-"[!!(p->flag&16)],
+					qgap, min_mapq, min_sc);
+		}
 	}
 }
 
@@ -192,8 +197,9 @@ int main_abreak(int argc, char *argv[])
 		fprintf(stderr, "         -g INT    join alignments separated by a gap shorter than INT bp (effective w/o -p) [%d]\n\n", o.max_gap);
 		fprintf(stderr, "Note: recommended BWA-MEM setting is '-x intractg'. In the output:\n\n");
 		fprintf(stderr, "        >qName\n");
-		fprintf(stderr, "        #      qStart  qEnd   strand   tName   tStart  tEnd     mapQ     perBaseDiv  alnScore\n");
-		fprintf(stderr, "        [A-Z]  tName1  tEnd1  strand1  tName2  tEnd2   strand2  qGapLen  minMapQ     minFlankScore\n\n");
+		fprintf(stderr, "        #      qStart  qEnd   strand   tName     tStart   tEnd     mapQ     perBaseDiv  alnScore\n");
+		fprintf(stderr, "        [DI]   tName   tEnd1  tEnd2    inDelLen  qGapLen  minMapQ  minSc\n");
+		fprintf(stderr, "        [CXV]  tName1  tEnd1  strand1  tName2    tEnd2    strand2  qGapLen  minMapQ     minSc\n\n");
 		return 1;
 	}
 
