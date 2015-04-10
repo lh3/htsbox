@@ -177,7 +177,7 @@ int main_abreak(int argc, char *argv[])
 	o.min_len = 150; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500;
 	while ((c = getopt(argc, argv, "ul:bq:m:g:ps:")) >= 0)
 		if (c == 'b') o.is_bam = 1;
-		else if (c == 'u') o.print_bp = 1, o.min_sc = 100, o.min_q = 30;
+		else if (c == 'u') o.print_bp = 1, o.min_sc = 80, o.min_q = 30;
 		else if (c == 'p') o.print_bp = 1;
 		else if (c == 's') o.min_sc = atoi(optarg);
 		else if (c == 'l') o.min_len = atoi(optarg);
@@ -192,7 +192,7 @@ int main_abreak(int argc, char *argv[])
 		fprintf(stderr, "         -s INT    exclude alignemnts with score less than INT [%d]\n", o.min_sc);
 		fprintf(stderr, "         -q INT    exclude alignments with mapQ below INT [%d]\n", o.min_q);
 		fprintf(stderr, "         -p        print break points\n");
-		fprintf(stderr, "         -u        unitig SV calling mode (-pq30 -s100)\n\n");
+		fprintf(stderr, "         -u        unitig SV calling mode (-pq30 -s80)\n\n");
 		fprintf(stderr, "         -m FLOAT  exclude aln overlapping another long aln by FLOAT fraction (effective w/o -p) [%g]\n", o.mask_level);
 		fprintf(stderr, "         -g INT    join alignments separated by a gap shorter than INT bp (effective w/o -p) [%d]\n\n", o.max_gap);
 		fprintf(stderr, "Note: recommended BWA-MEM setting is '-x intractg'. In the output:\n\n");
