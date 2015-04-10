@@ -177,7 +177,7 @@ int main_abreak(int argc, char *argv[])
 	o.min_len = 150; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500;
 	while ((c = getopt(argc, argv, "ul:bq:m:g:ps:")) >= 0)
 		if (c == 'b') o.is_bam = 1;
-		else if (c == 'u') o.print_bp = 1, o.min_sc = 80, o.min_q = 30;
+		else if (c == 'u') o.print_bp = 1, o.min_sc = 80, o.min_q = 40;
 		else if (c == 'p') o.print_bp = 1;
 		else if (c == 's') o.min_sc = atoi(optarg);
 		else if (c == 'l') o.min_len = atoi(optarg);

@@ -4,7 +4,7 @@
 #include <ctype.h>
 #include "vcf.h"
 
-#define HTSBOX_VERSION "r294"
+#define HTSBOX_VERSION "r295"
 
 int main_samview(int argc, char *argv[]);
 int main_vcfview(int argc, char *argv[]);
