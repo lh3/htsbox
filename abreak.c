@@ -5,7 +5,7 @@
 #include "ksort.h"
 
 typedef struct {
-	int is_bam, print_bp, min_len, min_sc, min_q, max_gap;
+	int is_bam, print_bp, min_len, min_sc, min_q, max_gap, is_vcf;
 	float mask_level;
 } cmdopt_t;
 
@@ -58,11 +58,13 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 	n_aa = n_high;
 	if (n_aa < 2) return;
 	ks_introsort(s2c, n_aa, aa);
-	printf(">%s\n", name);
-	for (i = 0; i < n_aa; ++i) {
-		aln_t *p = &aa[i];
-		printf("#\t%d\t%d\t%c\t%s\t%d\t%d\t%d\t%.4f\t%d\n", p->qbeg, p->qbeg + p->qlen, "+-"[p->flag>>4&1],
-				h->target_name[p->tid], p->pos, p->pos + p->rlen, p->mapq, p->diff, p->score);
+	if (!o->is_vcf) {
+		printf(">%s\n", name);
+		for (i = 0; i < n_aa; ++i) { // print evidence
+			aln_t *p = &aa[i];
+			printf("#\t%d\t%d\t%c\t%s\t%d\t%d\t%d\t%.4f\t%d\n", p->qbeg, p->qbeg + p->qlen, "+-"[p->flag>>4&1],
+					h->target_name[p->tid], p->pos, p->pos + p->rlen, p->mapq, p->diff, p->score);
+		}
 	}
 	for (i = 1; i < n_aa; ++i) {
 		aln_t *q = &aa[i-1], *p = &aa[i];
@@ -81,14 +83,31 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 				type = q->pos >= p->pos? 'C' : pt_start - qt_end > qgap? 'D' : 'I';
 			} else type = 'V';
 		} else type = 'X';
-		if (type == 'D' || type == 'I') {
-			printf("%c\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n", type, h->target_name[q->tid], qt_end, pt_start,
-					qgap - (pt_start - qt_end), qgap, min_mapq, min_sc);
-		} else {
-			printf("%c\t%s\t%d\t%c\t%s\t%d\t%c\t%d\t%d\t%d\n", type, 
-					h->target_name[q->tid], qt_end, "+-"[!!(q->flag&16)],
-					h->target_name[p->tid], pt_start, "+-"[!!(p->flag&16)],
-					qgap, min_mapq, min_sc);
+		if (!o->is_vcf) {
+			if (type == 'D' || type == 'I') {
+				printf("%c\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n", type, h->target_name[q->tid], qt_end, pt_start,
+						qgap - (pt_start - qt_end), qgap, min_mapq, min_sc);
+			} else {
+				printf("%c\t%s\t%d\t%c\t%s\t%d\t%c\t%d\t%d\t%d\n", type, 
+						h->target_name[q->tid], qt_end, "+-"[!!(q->flag&16)],
+						h->target_name[p->tid], pt_start, "+-"[!!(p->flag&16)],
+						qgap, min_mapq, min_sc);
+			}
+		} else if (type == 'D' || type == 'I') {
+			int max_start, max_end, len = qgap - (pt_start - qt_end);
+			const char *type_str = 0;
+			if (type == 'D') {
+				len = -len;
+				type_str = "DEL";
+				max_start = qt_end < pt_start - len? qt_end : pt_start - len;
+				max_end = pt_start > qt_end + len? pt_start : qt_end + len;
+			} else {
+				type_str = "INS";
+				max_start = qt_end < pt_start? qt_end : pt_start;
+				max_end = qt_end > pt_start? qt_end : pt_start;
+			}
+			printf("%s\t%d\t.\tN\t<%s>\t.\t.\tEND=%d;SVLEN=%d;QGAP=%d;MINMAPQ=%d;MINSC=%d\n", h->target_name[q->tid],
+					max_start+1, type_str, max_end, len, qgap, min_mapq, min_sc);
 		}
 	}
 }
@@ -175,7 +194,7 @@ int main_abreak(int argc, char *argv[])
 	memset(&out, 0, sizeof(kstring_t));
 	memset(&o, 0, sizeof(cmdopt_t));
 	o.min_len = 150; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500;
-	while ((c = getopt(argc, argv, "ul:bq:m:g:ps:")) >= 0)
+	while ((c = getopt(argc, argv, "ul:bq:m:g:pcs:")) >= 0)
 		if (c == 'b') o.is_bam = 1;
 		else if (c == 'u') o.print_bp = 1, o.min_sc = 80, o.min_q = 40;
 		else if (c == 'p') o.print_bp = 1;
@@ -184,18 +203,20 @@ int main_abreak(int argc, char *argv[])
 		else if (c == 'q') o.min_q = atoi(optarg);
 		else if (c == 'm') o.mask_level = atof(optarg);
 		else if (c == 'g') o.max_gap = atoi(optarg);
+		else if (c == 'c') o.is_vcf = o.print_bp = 1;
 	if (optind == argc) {
 		fprintf(stderr, "\n");
-		fprintf(stderr, "Usage:   htscmd abreak [options] <aln.sam>|<aln.bam>\n\n");
+		fprintf(stderr, "Usage:   htscmd abreak [options] <unsrt.sam>|<unsrt.bam>\n\n");
 		fprintf(stderr, "Options: -b        assume the input is BAM (default is SAM)\n");
 		fprintf(stderr, "         -l INT    exclude contigs shorter than INT [%d]\n", o.min_len);
 		fprintf(stderr, "         -s INT    exclude alignemnts with score less than INT [%d]\n", o.min_sc);
 		fprintf(stderr, "         -q INT    exclude alignments with mapQ below INT [%d]\n", o.min_q);
 		fprintf(stderr, "         -p        print break points\n");
+		fprintf(stderr, "         -c        VCF output (force -p; for insertions/deletions ONLY)\n");
 		fprintf(stderr, "         -u        unitig SV calling mode (-pq40 -s80)\n\n");
 		fprintf(stderr, "         -m FLOAT  exclude aln overlapping another long aln by FLOAT fraction (effective w/o -p) [%g]\n", o.mask_level);
 		fprintf(stderr, "         -g INT    join alignments separated by a gap shorter than INT bp (effective w/o -p) [%d]\n\n", o.max_gap);
-		fprintf(stderr, "Note: recommended BWA-MEM setting is '-x intractg'. In the output:\n\n");
+		fprintf(stderr, "Note: recommended BWA-MEM setting is '-x intractg'. In the default output:\n\n");
 		fprintf(stderr, "        >qName\n");
 		fprintf(stderr, "        #      qStart  qEnd   strand   tName     tStart   tEnd     mapQ     perBaseDiv  alnScore\n");
 		fprintf(stderr, "        [DI]   tName   tEnd1  tEnd2    inDelLen  qGapLen  minMapQ  minSc\n");
@@ -206,6 +227,18 @@ int main_abreak(int argc, char *argv[])
 	in = sam_open(argv[optind], o.is_bam? "rb" : "r", 0);
 	h = sam_hdr_read(in);
 	b = bam_init1();
+
+	if (o.is_vcf) {
+		printf("##fileformat=VCFv4.1\n");
+		printf("##ALT=<ID=DEL,Description=\"Deletion\">\n");
+		printf("##ALT=<ID=INS,Description=\"Insertion\">\n");
+		printf("##INFO=<ID=SVLEN,Number=1,Type=Integer,Description=\"SV length\">\n");
+		printf("##INFO=<ID=QGAP,Number=1,Type=Integer,Description=\"Length of gap on the query sequence\">\n");
+		printf("##INFO=<ID=MINMAPQ,Number=1,Type=Integer,Description=\"Min flanking mapping quality\">\n");
+		printf("##INFO=<ID=MINSC,Number=1,Type=Integer,Description=\"Min flanking alignment score\">\n");
+		printf("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n");
+	}
+
 	while (sam_read1(in, h, b) >= 0) {
 		uint32_t *cigar = bam_get_cigar(b);
 		uint8_t *tmp = 0;
