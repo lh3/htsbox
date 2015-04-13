@@ -106,8 +106,14 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 				max_start = qt_end < pt_start? qt_end : pt_start;
 				max_end = qt_end > pt_start? qt_end : pt_start;
 			}
-			printf("%s\t%d\t.\tN\t<%s>\t.\t.\tEND=%d;SVLEN=%d;QGAP=%d;MINMAPQ=%d;MINSC=%d\n", h->target_name[q->tid],
-					max_start+1, type_str, max_end, len, qgap, min_mapq, min_sc);
+			printf("%s\t%d\t.\tN\t<%s>\t.\t.\tSVTYPE=%s;END=%d;SVLEN=%d;QGAP=%d;MINMAPQ=%d;MINSC=%d\n", h->target_name[q->tid],
+					max_start+1, type_str, type_str, max_end, len, qgap, min_mapq, min_sc);
+		} else {
+			int dir = (p->flag&16)? '[' : ']';
+			printf("%s\t%d\t.\tN\t", h->target_name[q->tid], qt_end + 1);
+			if (q->flag&16) printf("%c%s:%d%cN", dir, h->target_name[p->tid], pt_start + 1, dir);
+			else printf("N%c%s:%d%c", dir, h->target_name[p->tid], pt_start + 1, dir);
+			printf("\t.\t.\tSVTYPE=COMPLEX;QGAP=%d;MINMAPQ=%d;MINSC=%d\n", qgap, min_mapq, min_sc);
 		}
 	}
 }
@@ -212,7 +218,7 @@ int main_abreak(int argc, char *argv[])
 		fprintf(stderr, "         -s INT    exclude alignemnts with score less than INT [%d]\n", o.min_sc);
 		fprintf(stderr, "         -q INT    exclude alignments with mapQ below INT [%d]\n", o.min_q);
 		fprintf(stderr, "         -p        print break points\n");
-		fprintf(stderr, "         -c        VCF output (force -p; for insertions/deletions ONLY)\n");
+		fprintf(stderr, "         -c        VCF output (force -p)\n");
 		fprintf(stderr, "         -u        unitig SV calling mode (-pq40 -s80)\n\n");
 		fprintf(stderr, "         -m FLOAT  exclude aln overlapping another long aln by FLOAT fraction (effective w/o -p) [%g]\n", o.mask_level);
 		fprintf(stderr, "         -g INT    join alignments separated by a gap shorter than INT bp (effective w/o -p) [%d]\n\n", o.max_gap);
@@ -233,6 +239,7 @@ int main_abreak(int argc, char *argv[])
 		printf("##ALT=<ID=DEL,Description=\"Deletion\">\n");
 		printf("##ALT=<ID=INS,Description=\"Insertion\">\n");
 		printf("##INFO=<ID=SVLEN,Number=1,Type=Integer,Description=\"SV length\">\n");
+		printf("##INFO=<ID=SVTYPE,Number=1,Type=String,Description=\"Type of structural variant\">\n");
 		printf("##INFO=<ID=QGAP,Number=1,Type=Integer,Description=\"Length of gap on the query sequence\">\n");
 		printf("##INFO=<ID=MINMAPQ,Number=1,Type=Integer,Description=\"Min flanking mapping quality\">\n");
 		printf("##INFO=<ID=MINSC,Number=1,Type=Integer,Description=\"Min flanking alignment score\">\n");
