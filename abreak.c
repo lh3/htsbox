@@ -114,7 +114,8 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 			printf("%s\t%d\t.\tN\t", h->target_name[q->tid], qt_end + 1);
 			if (q->flag&16) printf("%c%s:%d%cN", dir, h->target_name[p->tid], pt_start + 1, dir);
 			else printf("N%c%s:%d%c", dir, h->target_name[p->tid], pt_start + 1, dir);
-			printf("\t30\t%s\tSVTYPE=COMPLEX;QGAP=%d;MINMAPQ=%d;MINSC=%d\n", min_tip_q < o->min_tip_q? "LowSupp" : ".", qgap, min_mapq, min_sc);
+			printf("\t30\t%s\tSVTYPE=COMPLEX;QGAP=%d;MINMAPQ=%d;MINSC=%d;MINTIPQ=%d\n",
+					min_tip_q < o->min_tip_q? "LowSupp" : ".", qgap, min_mapq, min_sc, min_tip_q);
 		}
 	}
 }
@@ -200,7 +201,7 @@ int main_abreak(int argc, char *argv[])
 	memset(&last, 0, sizeof(kstring_t));
 	memset(&out, 0, sizeof(kstring_t));
 	memset(&o, 0, sizeof(cmdopt_t));
-	o.min_len = 150; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500; o.min_tip_q = 7;
+	o.min_len = 150; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500; o.min_tip_q = 10;
 	while ((c = getopt(argc, argv, "ul:bq:m:g:pcs:d:")) >= 0)
 		if (c == 'b') o.is_bam = 1;
 		else if (c == 'u') o.print_bp = 1, o.min_sc = 80, o.min_q = 40;
