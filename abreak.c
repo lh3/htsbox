@@ -5,7 +5,7 @@
 #include "ksort.h"
 
 typedef struct {
-	int is_bam, print_bp, min_len, min_sc, min_q, max_gap, is_vcf;
+	int is_bam, print_bp, min_len, min_sc, min_q, max_gap, is_vcf, min_tip_q;
 	float mask_level;
 } cmdopt_t;
 
@@ -17,7 +17,7 @@ typedef struct {
 } stat_t;
 
 typedef struct {
-	int tid, pos, len, qlen, rlen, flag, mapq, qbeg, clip[2], ins, del, nm, score;
+	int tid, pos, len, qlen, rlen, flag, mapq, qbeg, clip[2], ins, del, nm, score, tip_q[2];
 	double diff;
 } aln_t;
 
@@ -62,14 +62,15 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 		printf(">%s\n", name);
 		for (i = 0; i < n_aa; ++i) { // print evidence
 			aln_t *p = &aa[i];
-			printf("#\t%d\t%d\t%c\t%s\t%d\t%d\t%d\t%.4f\t%d\n", p->qbeg, p->qbeg + p->qlen, "+-"[p->flag>>4&1],
-					h->target_name[p->tid], p->pos, p->pos + p->rlen, p->mapq, p->diff, p->score);
+			printf("#\t%d\t%d\t%c\t%s\t%d\t%d\t%d\t%.4f\t%d\t%d\t%d\n", p->qbeg, p->qbeg + p->qlen, "+-"[p->flag>>4&1],
+					h->target_name[p->tid], p->pos, p->pos + p->rlen, p->mapq, p->diff, p->score, p->tip_q[0], p->tip_q[1]);
 		}
 	}
 	for (i = 1; i < n_aa; ++i) {
 		aln_t *q = &aa[i-1], *p = &aa[i];
 		int min_mapq = q->mapq < p->mapq? q->mapq : p->mapq;
 		int min_sc = q->score < p->score? q->score : p->score;
+		int min_tip_q = q->tip_q[1] < p->tip_q[0]? q->tip_q[1] : p->tip_q[0];
 		int qgap = p->qbeg - (q->qbeg + q->qlen);
 		int qt_end, pt_start;
 		char type;
@@ -85,8 +86,8 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 		} else type = 'X';
 		if (!o->is_vcf) {
 			if (type == 'D' || type == 'I') {
-				printf("%c\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n", type, h->target_name[q->tid], qt_end, pt_start,
-						qgap - (pt_start - qt_end), qgap, min_mapq, min_sc);
+				printf("%c\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", type, h->target_name[q->tid], qt_end, pt_start,
+						qgap - (pt_start - qt_end), qgap, min_mapq, min_sc, min_tip_q);
 			} else {
 				printf("%c\t%s\t%d\t%c\t%s\t%d\t%c\t%d\t%d\t%d\n", type, 
 						h->target_name[q->tid], qt_end, "+-"[!!(q->flag&16)],
@@ -106,14 +107,14 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 				max_start = qt_end < pt_start? qt_end : pt_start;
 				max_end = qt_end > pt_start? qt_end : pt_start;
 			}
-			printf("%s\t%d\t.\tN\t<%s>\t.\t.\tSVTYPE=%s;END=%d;SVLEN=%d;QGAP=%d;MINMAPQ=%d;MINSC=%d\n", h->target_name[q->tid],
-					max_start+1, type_str, type_str, max_end, len, qgap, min_mapq, min_sc);
+			printf("%s\t%d\t.\tN\t<%s>\t30\t%s\tSVTYPE=%s;END=%d;SVLEN=%d;QGAP=%d;MINMAPQ=%d;MINSC=%d;MINTIPQ=%d\n", h->target_name[q->tid],
+					max_start+1, type_str, min_tip_q < o->min_tip_q? "LowSupp" : ".", type_str, max_end, len, qgap, min_mapq, min_sc, min_tip_q);
 		} else {
 			int dir = (p->flag&16)? '[' : ']';
 			printf("%s\t%d\t.\tN\t", h->target_name[q->tid], qt_end + 1);
 			if (q->flag&16) printf("%c%s:%d%cN", dir, h->target_name[p->tid], pt_start + 1, dir);
 			else printf("N%c%s:%d%c", dir, h->target_name[p->tid], pt_start + 1, dir);
-			printf("\t.\t.\tSVTYPE=COMPLEX;QGAP=%d;MINMAPQ=%d;MINSC=%d\n", qgap, min_mapq, min_sc);
+			printf("\t30\t%s\tSVTYPE=COMPLEX;QGAP=%d;MINMAPQ=%d;MINSC=%d\n", min_tip_q < o->min_tip_q? "LowSupp" : ".", qgap, min_mapq, min_sc);
 		}
 	}
 }
@@ -199,8 +200,8 @@ int main_abreak(int argc, char *argv[])
 	memset(&last, 0, sizeof(kstring_t));
 	memset(&out, 0, sizeof(kstring_t));
 	memset(&o, 0, sizeof(cmdopt_t));
-	o.min_len = 150; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500;
-	while ((c = getopt(argc, argv, "ul:bq:m:g:pcs:")) >= 0)
+	o.min_len = 150; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500; o.min_tip_q = 7;
+	while ((c = getopt(argc, argv, "ul:bq:m:g:pcs:d:")) >= 0)
 		if (c == 'b') o.is_bam = 1;
 		else if (c == 'u') o.print_bp = 1, o.min_sc = 80, o.min_q = 40;
 		else if (c == 'p') o.print_bp = 1;
@@ -210,6 +211,7 @@ int main_abreak(int argc, char *argv[])
 		else if (c == 'm') o.mask_level = atof(optarg);
 		else if (c == 'g') o.max_gap = atoi(optarg);
 		else if (c == 'c') o.is_vcf = o.print_bp = 1;
+		else if (c == 'd') o.min_tip_q = atoi(optarg);
 	if (optind == argc) {
 		fprintf(stderr, "\n");
 		fprintf(stderr, "Usage:   htscmd abreak [options] <unsrt.sam>|<unsrt.bam>\n\n");
@@ -217,6 +219,7 @@ int main_abreak(int argc, char *argv[])
 		fprintf(stderr, "         -l INT    exclude contigs shorter than INT [%d]\n", o.min_len);
 		fprintf(stderr, "         -s INT    exclude alignemnts with score less than INT [%d]\n", o.min_sc);
 		fprintf(stderr, "         -q INT    exclude alignments with mapQ below INT [%d]\n", o.min_q);
+		fprintf(stderr, "         -d INT    filter calls with min flanking depth below INT in VCF [%d]\n", o.min_tip_q);
 		fprintf(stderr, "         -p        print break points\n");
 		fprintf(stderr, "         -c        VCF output (force -p)\n");
 		fprintf(stderr, "         -u        unitig SV calling mode (-pq40 -s80)\n\n");
@@ -243,12 +246,16 @@ int main_abreak(int argc, char *argv[])
 		printf("##INFO=<ID=QGAP,Number=1,Type=Integer,Description=\"Length of gap on the query sequence\">\n");
 		printf("##INFO=<ID=MINMAPQ,Number=1,Type=Integer,Description=\"Min flanking mapping quality\">\n");
 		printf("##INFO=<ID=MINSC,Number=1,Type=Integer,Description=\"Min flanking alignment score\">\n");
+		printf("##INFO=<ID=MINTIPQ,Number=1,Type=Integer,Description=\"Min quality/depth flanking the break point\">\n");
+		printf("##FILTER=<ID=LowSupp,Description=\"MINTIPQ < %d\">\n", o.min_tip_q);
 		printf("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n");
 	}
 
 	while (sam_read1(in, h, b) >= 0) {
-		uint32_t *cigar = bam_get_cigar(b);
+		const uint32_t *cigar = bam_get_cigar(b);
+		const uint8_t *qual = bam_get_qual(b);
 		uint8_t *tmp = 0;
+		int clip_q[2], is_rev = !!(b->core.flag&BAM_FREVERSE);
 		if (last.s == 0 || strcmp(last.s, bam_get_qname(b))) {
 			if (last.s) analyze_aln(n_aa, aa, &s, &o, h, last.s);
 			last.l = 0;
@@ -256,20 +263,26 @@ int main_abreak(int argc, char *argv[])
 			n_aa = 0;
 		}
 		a.qlen = a.rlen = a.ins = a.del = a.clip[0] = a.clip[1] = 0;
+		clip_q[0] = qual[0], clip_q[1] = qual[b->core.l_qseq - 1];
 		for (k = 0; k < b->core.n_cigar; ++k) {
 			int op = bam_cigar_op(cigar[k]);
 			int oplen = bam_cigar_oplen(cigar[k]);
+			if (oplen == 0) continue;
 			if ((bam_cigar_type(op)&1) && op != BAM_CSOFT_CLIP) a.qlen += oplen;
+			if (op == BAM_CSOFT_CLIP || op == BAM_CHARD_CLIP) {
+				a.clip[!!k] = oplen;
+				if (op == BAM_CSOFT_CLIP)
+					clip_q[!!k] = !k? qual[oplen] : qual[a.qlen + a.clip[0] - 1];
+			}
 			if (bam_cigar_type(op)&2) a.rlen += oplen;
-			if (op == BAM_CSOFT_CLIP || op == BAM_CHARD_CLIP)
-				a.clip[k == 0? 0 : 1] = oplen;
 			if (op == BAM_CINS) ++a.ins;
 			else if (op == BAM_CDEL) ++a.del;
 		}
 		a.len = a.qlen + a.clip[0] + a.clip[1];
 		if (a.len == 0) a.len = b->core.l_qseq;
 		a.tid = b->core.tid; a.pos = b->core.pos; a.flag = b->core.flag; a.mapq = b->core.qual;
-		a.qbeg = a.clip[!!(a.flag&BAM_FREVERSE)];
+		a.qbeg = a.clip[is_rev];
+		a.tip_q[0] = clip_q[is_rev], a.tip_q[1] = clip_q[!is_rev];
 		if ((tmp = bam_aux_get(b, "NM")) != 0) {
 			a.nm = bam_aux2i(tmp);
 			a.diff = (double)a.nm / (a.qlen + a.del);
