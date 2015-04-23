@@ -335,9 +335,9 @@ int main_pileup(int argc, char *argv[])
 		puts("##fileformat=VCFv4.1");
 		puts("##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">");
 		if (show_2strand) {
-			puts("##FORMAT=<ID=FC,Number=A,Type=Integer,Description=\"Number of supporting reads on the forward strand\">");
-			puts("##FORMAT=<ID=RC,Number=A,Type=Integer,Description=\"Number of supporting reads on the reverse strand\">");
-		} else puts("##FORMAT=<ID=SR,Number=A,Type=Integer,Description=\"Number of supporting reads\">");
+			puts("##FORMAT=<ID=FC,Number=R,Type=Integer,Description=\"Number of supporting reads on the forward strand\">");
+			puts("##FORMAT=<ID=RC,Number=R,Type=Integer,Description=\"Number of supporting reads on the reverse strand\">");
+		} else puts("##FORMAT=<ID=SR,Number=R,Type=Integer,Description=\"Number of supporting reads\">");
 		fputs("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT", stdout);
 		for (i = 0; i < n; ++i) printf("\t%s", argv[optind+i]);
 		putchar('\n');
