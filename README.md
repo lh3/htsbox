@@ -29,8 +29,9 @@ repositories][github] are the right place.
    ```
    The output in VCF gives positions with ALT alleles appearing 3 or more times.
    Note that variant calling in this way is very crude. It is usually not
-   recommended to use this for whole-genome and exon variant calling. To call
-   variants from fermi unitigs:
+   recommended to use this for whole-genome and exon variant calling from short
+   reads. Nonetheless, `pileup' is a proper tool to call variants from contigs,
+   in particular unitigs produced by fermi:
    ```sh
    htsbox pileup -cuf ref.fa unitig.bam
    ```
@@ -52,6 +53,10 @@ repositories][github] are the right place.
 5. Count alignment break points (mainly used to evaluate misassemblies):
    ```sh
    htsbox abreak name-srt.sam.gz
+   ```
+   or call structural variantions:
+   ```sh
+   htsbox abreak -u name-srt.sam.gz
    ```
 
 6. Reduce quality resolution with Illumina binning:
