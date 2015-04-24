@@ -2,9 +2,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
+#include "boxver.h"
 #include "vcf.h"
-
-#define HTSBOX_VERSION "r301"
 
 int main_samview(int argc, char *argv[]);
 int main_vcfview(int argc, char *argv[]);

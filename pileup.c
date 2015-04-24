@@ -9,6 +9,7 @@
 #include "sam.h"
 #include "faidx.h"
 #include "ksort.h"
+#include "boxver.h"
 
 const char *hts_parse_reg(const char *s, int *beg, int *end);
 void *bed_read(const char *fn);
@@ -333,11 +334,12 @@ int main_pileup(int argc, char *argv[])
 	memset(&aux, 0, sizeof(paux_t));
 	if (is_vcf) {
 		puts("##fileformat=VCFv4.1");
+		printf("##source=htsbox-pileup-%s\n", HTSBOX_VERSION);
 		puts("##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">");
 		if (show_2strand) {
-			puts("##FORMAT=<ID=FC,Number=R,Type=Integer,Description=\"Number of supporting reads on the forward strand\">");
-			puts("##FORMAT=<ID=RC,Number=R,Type=Integer,Description=\"Number of supporting reads on the reverse strand\">");
-		} else puts("##FORMAT=<ID=SR,Number=R,Type=Integer,Description=\"Number of supporting reads\">");
+			puts("##FORMAT=<ID=ADF,Number=R,Type=Integer,Description=\"Allelic depths on the forward strand\">");
+			puts("##FORMAT=<ID=ADR,Number=R,Type=Integer,Description=\"Allelic depths on the reverse strand\">");
+		} else puts("##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"Allelic depths for the ref and alt alleles in the order listed\">");
 		fputs("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT", stdout);
 		for (i = 0; i < n; ++i) printf("\t%s", argv[optind+i]);
 		putchar('\n');
@@ -444,7 +446,7 @@ int main_pileup(int argc, char *argv[])
 				// compute and print qual
 				for (i = !(a[0].hash>>63), qual = 0; i < aux.n_alleles; ++i)
 					qual = qual > aux.support[i]? qual : aux.support[i];
-				if (is_vcf) printf("\t%d\t.\t.\tGT:%s", qual, show_2strand? "FC:RC" : "SR");
+				if (is_vcf) printf("\t%d\t.\t.\tGT:%s", qual, show_2strand? "ADF:ADR" : "AD");
 				// print counts
 				shift = (is_vcf && a[0].hash>>63); // in VCF, if there is no ref allele, we need to shift the allele number
 				for (i = k = 0; i < n; ++i, k += aux.n_alleles) {
