@@ -241,7 +241,7 @@ int main_abreak(int argc, char *argv[])
 
 	if (o.is_vcf) {
 		printf("##fileformat=VCFv4.1\n");
-		printf("##source=htsbox-abreak-%s", HTSBOX_VERSION);
+		printf("##source=htsbox-abreak-%s\n", HTSBOX_VERSION);
 		printf("##ALT=<ID=DEL,Description=\"Deletion\">\n");
 		printf("##ALT=<ID=INS,Description=\"Insertion\">\n");
 		printf("##INFO=<ID=SVLEN,Number=1,Type=Integer,Description=\"SV length\">\n");
