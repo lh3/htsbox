@@ -179,7 +179,7 @@ int bcf_hdr_sync(bcf_hdr_t *h)
 		khint_t k;
 		vdict_t *d = (vdict_t*)h->dict[i];
 		h->n[i]  = kh_size(d);
-		h->id[i] = (bcf_idpair_t*)malloc(kh_size(d) * sizeof(bcf_idpair_t));
+		h->id[i] = (bcf_idpair_t*)realloc(h->id[i], kh_size(d) * sizeof(bcf_idpair_t));
 		for (k = kh_begin(d); k != kh_end(d); ++k) {
 			if (!kh_exist(d, k)) continue;
 			h->id[i][kh_val(d, k).id].key = kh_key(d, k);
