@@ -96,6 +96,16 @@ extern "C" {
 	 */
 	char *faidx_fetch_seq(const faidx_t *fai, char *c_name, int p_beg_i, int p_end_i, int *len);
 
+	/*!
+	  @abstract    Return name of i-th sequence
+	 */
+	const char *faidx_iseq(const faidx_t *fai, int i);
+
+	/*!
+	  @abstract    Return sequence length, -1 if not present
+	 */
+	int faidx_seq_len(const faidx_t *fai, const char *seq);
+
 #ifdef __cplusplus
 }
 #endif

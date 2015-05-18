@@ -403,6 +403,18 @@ int faidx_fetch_nseq(const faidx_t *fai)
 	return fai->n;
 }
 
+const char *faidx_iseq(const faidx_t *fai, int i)
+{
+	return fai->name[i];
+}
+
+int faidx_seq_len(const faidx_t *fai, const char *seq)
+{
+	khint_t k = kh_get(s, fai->hash, seq);
+	if ( k == kh_end(fai->hash) ) return -1;
+	return kh_val(fai->hash, k).len;
+}
+
 char *faidx_fetch_seq(const faidx_t *fai, char *c_name, int p_beg_i, int p_end_i, int *len)
 {
 	int l;

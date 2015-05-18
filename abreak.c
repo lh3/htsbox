@@ -1,9 +1,11 @@
 #include <stdlib.h>
 #include <unistd.h>
+#include <ctype.h>
 #include "boxver.h"
 #include "sam.h"
 #include "kstring.h"
 #include "ksort.h"
+#include "faidx.h"
 
 typedef struct {
 	int is_bam, print_bp, min_len, min_sc, min_q, max_gap, is_vcf, min_tip_q;
@@ -50,7 +52,7 @@ static void count_break(int c[5], int n_aa, aln_t *aa, const cmdopt_t *o)
 		if (b[i]) c[i] += b[i] - 1;
 }
 
-static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam_hdr_t *h, const char *name)
+static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam_hdr_t *h, const char *name, faidx_t *fai)
 {
 	int i, n_high = 0;
 	if (n_aa < 2) return;
@@ -73,7 +75,7 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 		int min_sc = q->score < p->score? q->score : p->score;
 		int min_tip_q = q->tip_q[1] < p->tip_q[0]? q->tip_q[1] : p->tip_q[0];
 		int qgap = p->qbeg - (q->qbeg + q->qlen);
-		int qt_end, pt_start;
+		int qt_end, pt_start, rlen;
 		char type;
 		qt_end = (q->flag&16)? q->pos : q->pos + q->rlen;
 		pt_start = (p->flag&16)? p->pos + p->rlen : p->pos;
@@ -108,26 +110,29 @@ static void print_break_points(int n_aa, aln_t *aa, const cmdopt_t *o, const bam
 				max_start = qt_end < pt_start? qt_end : pt_start;
 				max_end = qt_end > pt_start? qt_end : pt_start;
 			}
-			printf("%s\t%d\t.\tN\t<%s>\t30\t%s\tSVTYPE=%s;END=%d;SVLEN=%d;QGAP=%d;MINMAPQ=%d;MINSC=%d;MINTIPQ=%d\n", h->target_name[q->tid],
-					max_start+1, type_str, min_tip_q < o->min_tip_q? "LowSupp" : ".", type_str, max_end, len, qgap, min_mapq, min_sc, min_tip_q);
+			char *ref = fai ? faidx_fetch_seq(fai, h->target_name[q->tid], max_start, max_start, &rlen) : "N";
+			printf("%s\t%d\t.\t%c\t<%s>\t30\t%s\tSVTYPE=%s;END=%d;SVLEN=%d;QGAP=%d;MINMAPQ=%d;MINSC=%d;MINTIPQ=%d\n", h->target_name[q->tid],
+					max_start+1, toupper(ref[0]), type_str, min_tip_q < o->min_tip_q? "LowSupp" : ".", type_str, max_end, len, qgap, min_mapq, min_sc, min_tip_q);
 		} else {
 			int dir = (p->flag&16)? '[' : ']';
-			printf("%s\t%d\t.\tN\t", h->target_name[q->tid], qt_end + 1);
-			if (q->flag&16) printf("%c%s:%d%cN", dir, h->target_name[p->tid], pt_start + 1, dir);
-			else printf("N%c%s:%d%c", dir, h->target_name[p->tid], pt_start + 1, dir);
+			char *ref = fai ? faidx_fetch_seq(fai, h->target_name[q->tid], qt_end, qt_end, &rlen) : "N";
+			char *join = fai ? faidx_fetch_seq(fai, h->target_name[p->tid], pt_start, pt_start, &rlen) : "N";
+			printf("%s\t%d\t.\t%c\t", h->target_name[q->tid], qt_end + 1, toupper(ref[0]));
+			if (q->flag&16) printf("%c%s:%d%c%c", dir, h->target_name[p->tid], pt_start + 1, dir, toupper(join[0]));
+			else printf("%c%c%s:%d%c", toupper(join[0]), dir, h->target_name[p->tid], pt_start + 1, dir);
 			printf("\t30\t%s\tSVTYPE=COMPLEX;QGAP=%d;MINMAPQ=%d;MINSC=%d;MINTIPQ=%d\n",
 					min_tip_q < o->min_tip_q? "LowSupp" : ".", qgap, min_mapq, min_sc, min_tip_q);
 		}
 	}
 }
 
-static void analyze_aln(int n_aa, aln_t *aa, stat_t *s, const cmdopt_t *o, const bam_hdr_t *h, const char *name)
+static void analyze_aln(int n_aa, aln_t *aa, stat_t *s, const cmdopt_t *o, const bam_hdr_t *h, const char *name, faidx_t *fai)
 {
 	int n_tmp, i;
 	aln_t *p, *tmp = 0;
 	// if asked to print break points only
 	if (o->print_bp) {
-		if (n_aa > 1) print_break_points(n_aa, aa, o, h, name);
+		if (n_aa > 1) print_break_points(n_aa, aa, o, h, name, fai);
 		return;
 	}
 	// special treatment of unmapped
@@ -196,6 +201,8 @@ int main_abreak(int argc, char *argv[])
 	kstring_t last, out;
 	stat_t s;
 	bam1_t *b;
+	faidx_t *fai = NULL;
+	char *fname;
 	
 	memset(&a, 0, sizeof(aln_t));
 	memset(&s, 0, sizeof(stat_t));
@@ -203,7 +210,7 @@ int main_abreak(int argc, char *argv[])
 	memset(&out, 0, sizeof(kstring_t));
 	memset(&o, 0, sizeof(cmdopt_t));
 	o.min_len = 150; o.min_q = 10; o.mask_level = 0.5; o.max_gap = 500; o.min_tip_q = 10;
-	while ((c = getopt(argc, argv, "ul:bq:m:g:pcs:d:")) >= 0)
+	while ((c = getopt(argc, argv, "ul:bq:m:g:pcs:d:f:")) >= 0)
 		if (c == 'b') o.is_bam = 1;
 		else if (c == 'u') o.print_bp = 1, o.min_sc = 80, o.min_q = 40;
 		else if (c == 'p') o.print_bp = 1;
@@ -214,6 +221,7 @@ int main_abreak(int argc, char *argv[])
 		else if (c == 'g') o.max_gap = atoi(optarg);
 		else if (c == 'c') o.is_vcf = o.print_bp = 1;
 		else if (c == 'd') o.min_tip_q = atoi(optarg);
+		else if (c == 'f') { fname = optarg; fai = fai_load(fname); }
 	if (optind == argc) {
 		fprintf(stderr, "\n");
 		fprintf(stderr, "Usage:   htscmd abreak [options] <unsrt.sam>|<unsrt.bam>\n\n");
@@ -224,7 +232,8 @@ int main_abreak(int argc, char *argv[])
 		fprintf(stderr, "         -d INT    filter calls with min flanking depth below INT in VCF [%d]\n", o.min_tip_q);
 		fprintf(stderr, "         -p        print break points\n");
 		fprintf(stderr, "         -c        VCF output (force -p)\n");
-		fprintf(stderr, "         -u        unitig SV calling mode (-pq40 -s80)\n\n");
+		fprintf(stderr, "         -u        unitig SV calling mode (-pq40 -s80)\n");
+		fprintf(stderr, "         -f FILE   faidx indexed reference fasta (for -u)\n\n");
 		fprintf(stderr, "         -m FLOAT  exclude aln overlapping another long aln by FLOAT fraction (effective w/o -p) [%g]\n", o.mask_level);
 		fprintf(stderr, "         -g INT    join alignments separated by a gap shorter than INT bp (effective w/o -p) [%d]\n\n", o.max_gap);
 		fprintf(stderr, "Note: recommended BWA-MEM setting is '-x intractg'. In the default output:\n\n");
@@ -242,10 +251,20 @@ int main_abreak(int argc, char *argv[])
 	if (o.is_vcf) {
 		printf("##fileformat=VCFv4.1\n");
 		printf("##source=htsbox-abreak-%s\n", HTSBOX_VERSION);
+		if (fai) {
+			printf("##reference=%s\n", fname);
+			int i, n = faidx_fetch_nseq(fai);
+			for (i=0; i<n; i++) {
+				const char *seq = faidx_iseq(fai,i);
+				int len = faidx_seq_len(fai, seq);
+				printf("##contig=<ID=%s,length=%d>\n", seq, len);
+			}
+		}
 		printf("##ALT=<ID=DEL,Description=\"Deletion\">\n");
 		printf("##ALT=<ID=INS,Description=\"Insertion\">\n");
 		printf("##INFO=<ID=SVLEN,Number=1,Type=Integer,Description=\"SV length\">\n");
 		printf("##INFO=<ID=SVTYPE,Number=1,Type=String,Description=\"Type of structural variant\">\n");
+		printf("##INFO=<ID=END,Number=1,Type=Integer,Description=\"End coordinate of this variant\">\n");
 		printf("##INFO=<ID=QGAP,Number=1,Type=Integer,Description=\"Length of gap on the query sequence\">\n");
 		printf("##INFO=<ID=MINMAPQ,Number=1,Type=Integer,Description=\"Min flanking mapping quality\">\n");
 		printf("##INFO=<ID=MINSC,Number=1,Type=Integer,Description=\"Min flanking alignment score\">\n");
@@ -260,7 +279,7 @@ int main_abreak(int argc, char *argv[])
 		uint8_t *tmp = 0;
 		int clip_q[2], is_rev = !!(b->core.flag&BAM_FREVERSE);
 		if (last.s == 0 || strcmp(last.s, bam_get_qname(b))) {
-			if (last.s) analyze_aln(n_aa, aa, &s, &o, h, last.s);
+			if (last.s) analyze_aln(n_aa, aa, &s, &o, h, last.s, fai);
 			last.l = 0;
 			kputs(bam_get_qname(b), &last);
 			n_aa = 0;
@@ -299,9 +318,10 @@ int main_abreak(int argc, char *argv[])
 			aa[n_aa++] = a;
 		}
 	}
-	analyze_aln(n_aa, aa, &s, &o, h, last.s);
+	analyze_aln(n_aa, aa, &s, &o, h, last.s, fai);
 	bam_hdr_destroy(h);
 	sam_close(in);
+	fai_destroy(fai);
 	if (!o.print_bp) {
 		uint64_t L = 0, tmp;
 		int N50;
