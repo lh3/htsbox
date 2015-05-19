@@ -214,6 +214,7 @@ int main_pileup(int argc, char *argv[])
 	float max_dev = 3.0, div_coef = 1.;
 	const bam_pileup1_t **plp;
 	char *ref = 0, *reg = 0, *chr_end; // specified region
+	char *fname = 0; // reference fasta
 	faidx_t *fai = 0;
 	bam_hdr_t *h = 0; // BAM header of the 1st input
 	aux_t **data;
@@ -223,7 +224,7 @@ int main_pileup(int argc, char *argv[])
 
 	// parse the command line
 	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:uMb:T:")) >= 0) {
-		if (n == 'f') fai = fai_load(optarg);
+		if (n == 'f') { fname = optarg; fai = fai_load(fname); }
 		else if (n == 'b') bed = bed_read(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
 		else if (n == 'r') reg = strdup(optarg);   // parsing a region requires a BAM header
@@ -335,6 +336,15 @@ int main_pileup(int argc, char *argv[])
 	if (is_vcf) {
 		puts("##fileformat=VCFv4.1");
 		printf("##source=htsbox-pileup-%s\n", HTSBOX_VERSION);
+		if (fai) {
+			printf("##reference=%s\n", fname);
+			int i, n = faidx_fetch_nseq(fai);
+			for (i=0; i<n; i++) {
+				const char *seq = faidx_iseq(fai,i);
+				int len = faidx_seq_len(fai, seq);
+				printf("##contig=<ID=%s,length=%d>\n", seq, len);
+			}
+		}
 		puts("##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">");
 		if (show_2strand) {
 			puts("##FORMAT=<ID=ADF,Number=R,Type=Integer,Description=\"Allelic depths on the forward strand\">");
