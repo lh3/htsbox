@@ -29,3 +29,16 @@ tbx.o:tbx.h bgzf.h kstring.h hts.h
 
 clean:
 		rm -fr gmon.out *.o a.out *.dSYM *~ *.a *.so *.dylib
+
+depend:
+		(LC_ALL=C; export LC_ALL; makedepend -Y -- $(CFLAGS) $(DFLAGS) -- *.c)
+
+# DO NOT DELETE THIS LINE -- make depend depends on it.
+
+bgzf.o: bgzf.h knetfile.h
+hts.o: bgzf.h hts.h kseq.h khash.h knetfile.h ksort.h
+knetfile.o: knetfile.h
+kurl.o: kurl.h
+sam.o: sam.h bgzf.h hts.h khash.h kseq.h kstring.h
+tbx.o: tbx.h hts.h bgzf.h khash.h
+vcf.o: kstring.h bgzf.h vcf.h hts.h khash.h kseq.h
