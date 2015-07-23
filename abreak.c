@@ -321,7 +321,7 @@ int main_abreak(int argc, char *argv[])
 	analyze_aln(n_aa, aa, &s, &o, h, last.s, fai);
 	bam_hdr_destroy(h);
 	sam_close(in);
-	fai_destroy(fai);
+	if (fai) fai_destroy(fai);
 	if (!o.print_bp) {
 		uint64_t L = 0, tmp;
 		int N50;
