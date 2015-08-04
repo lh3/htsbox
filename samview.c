@@ -59,7 +59,27 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 	puts(buf->s);
 }
 
-static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b, const void *bed)
+static void mark_poor(bam1_t *b, double frac)
+{
+	const uint32_t *cigar = bam_get_cigar(b);
+	uint8_t *pNM;
+	int k, len[16], NM = 0, n_gaps, n_gapo, alen, diff;
+	if ((b->core.flag & 4) || b->core.tid < 0 || b->core.pos < 0) return; // do nothing if unmapped
+	if ((pNM = bam_aux_get(b, "NM")) != 0) NM = bam_aux2i(pNM); // get the NM tag
+	memset(len, 0, 16 * sizeof(int));
+	for (k = 0, n_gapo = 0; k < b->core.n_cigar; ++k) {
+		int op = bam_cigar_op(cigar[k]);
+		len[op] += bam_cigar_oplen(cigar[k]);
+		if (op == BAM_CINS || op == BAM_CDEL || op == BAM_CREF_SKIP) ++n_gapo;
+	}
+	n_gaps = len[BAM_CINS] + len[BAM_CDEL];
+	if (NM < n_gaps) NM = n_gaps;
+	alen = len[BAM_CMATCH] + len[BAM_CEQUAL] + len[BAM_CDIFF] + len[BAM_CSOFT_CLIP] + len[BAM_CHARD_CLIP] + n_gapo;
+	diff = (NM - n_gaps) + n_gapo + len[BAM_CSOFT_CLIP] + len[BAM_CHARD_CLIP];
+	if (diff > alen * frac) b->core.flag |= 0x200;
+}
+
+static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b, double max_diff, const void *bed)
 {
 	if (!(flag&4)) {
 		if (bed) {
@@ -74,6 +94,8 @@ static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *
 			if (!bed_overlap(bed, h->target_name[c->tid], c->pos, c->pos + n[0] + n[2] + n[3] + n[7] + n[8]))
 				return;
 		}
+		if (max_diff < 1.0 && max_diff >= 0.0)
+			mark_poor(b, max_diff);
 		sam_write1(out, h, b);
 	} else print_pas(h, b, buf);
 }
@@ -84,16 +106,18 @@ int main_samview(int argc, char *argv[])
 	char *fn_ref = 0;
 	int flag = 0, c, clevel = -1, ignore_sam_err = 0;
 	char moder[8];
+	double max_diff = 2.0;
 	void *bed = 0;
 	kstring_t buf = {0, 0, 0};
 	bam_hdr_t *h;
 	bam1_t *b;
 
-	while ((c = getopt(argc, argv, "IbpSl:t:UL:")) >= 0) {
+	while ((c = getopt(argc, argv, "IbpSl:t:UL:d:")) >= 0) {
 		switch (c) {
 		case 'S': flag |= 1; break;
 		case 'b': flag |= 2; break;
 		case 'p': flag |= 4; break;
+		case 'd': max_diff = atof(optarg); break;
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 't': fn_ref = optarg; break;
 		case 'I': ignore_sam_err = 1; break;
@@ -101,7 +125,7 @@ int main_samview(int argc, char *argv[])
 		}
 	}
 	if (argc == optind) {
-		fprintf(stderr, "Usage: samview [-bSIp] [-L reg.bed] [-l level] [-Q qualRes] <in.bam>|<in.sam> [region]\n");
+		fprintf(stderr, "Usage: samview [-bSIp] [-L reg.bed] [-l level] [-d maxDiff] <in.bam>|<in.sam> [region]\n");
 		return 1;
 	}
 	strcpy(moder, "r");
@@ -136,13 +160,13 @@ int main_samview(int argc, char *argv[])
 					continue;
 				}
 				while (bam_itr_next((BGZF*)in->fp, iter, b) >= 0)
-					print_line(flag, out, &buf, h, b, bed);
+					print_line(flag, out, &buf, h, b, max_diff, bed);
 				hts_itr_destroy(iter);
 			}
 			hts_idx_destroy(idx);
 		} else {
 			while (sam_read1(in, h, b) >= 0)
-				print_line(flag, out, &buf, h, b, bed);
+				print_line(flag, out, &buf, h, b, max_diff, bed);
 		}
 		if (out) sam_close(out);
 	}
