@@ -38,7 +38,7 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 		}
 		tag = bam_aux_get(b, "NM");
 		nm = tag? bam_aux2i(tag) : 0;
-		if (nm < ni + oi) nm = ni + oi;
+		if (nm < ni + nd) nm = ni + nd;
 
 		ql = clip[0] + m + ni + clip[1];
 		tl = h->target_len[b->core.tid];

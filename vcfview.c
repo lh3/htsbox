@@ -4,13 +4,13 @@
 
 int main_vcfview(int argc, char *argv[])
 {
-	int i, c, clevel = -1, flag = 0, n_samples = -1, *imap = 0, excl_indel = 0;
+	int i, c, clevel = -1, flag = 0, n_samples = -1, *imap = 0, excl_indel = 0, gt_only = 0;
 	char *fn_ref = 0, *fn_out = 0, moder[8], **samples = 0;
 	bcf_hdr_t *h, *hsub = 0;
 	htsFile *in;
 	bcf1_t *b;
 
-	while ((c = getopt(argc, argv, "l:bSt:o:T:s:GI")) >= 0) {
+	while ((c = getopt(argc, argv, "l:bSt:o:T:s:GIF")) >= 0) {
 		switch (c) {
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 'S': flag |= 1; break;
@@ -20,6 +20,7 @@ int main_vcfview(int argc, char *argv[])
 		case 'o': fn_out = optarg; break;
 		case 's': samples = hts_readlines(optarg, &n_samples); break;
 		case 'I': excl_indel = 1; break;
+		case 'F': gt_only = 1; break;
 		}
 	}
 	if (argc == optind) {
@@ -68,6 +69,7 @@ int main_vcfview(int argc, char *argv[])
 				}
 				while (bcf_itr_next((BGZF*)in->fp, iter, b) >= 0) {
 					if (excl_indel && !bcf_is_snp(b)) continue;
+					if (gt_only && b->n_fmt > 1) b->n_fmt = 1;
 					if (n_samples >= 0) {
 						bcf_subset(h, b, n_samples, imap);
 						vcf_write1(out, hsub, b);
@@ -79,6 +81,7 @@ int main_vcfview(int argc, char *argv[])
 		} else {
 			while (vcf_read1(in, h, b) >= 0) {
 				if (excl_indel && !bcf_is_snp(b)) continue;
+				if (gt_only && b->n_fmt > 1) b->n_fmt = 1;
 				if (n_samples >= 0) {
 					bcf_subset(h, b, n_samples, imap);
 					vcf_write1(out, hsub, b);
