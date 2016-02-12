@@ -20,20 +20,21 @@ static inline void print_counts(counter_t *cnt, const char *ctg)
 
 int main_depth(int argc, char *argv[])
 {
-	int c, qthres = 20;
+	int c, qthres = 20, min_baseQ = 0;
 	int n, tid, pos, upper = -1, lower = -1, last_tid = -1, last_pos = -2, i;
-	double pc = 0.2;
+	double pc = 0.;
 	counter_t cnt;
 	BGZF *fp;
 	bam_hdr_t *h;
 	bam_plp_t plp;
 	const bam_pileup1_t *p;
-	while ((c = getopt(argc, argv, "q:p:")) >= 0) {
+	while ((c = getopt(argc, argv, "q:p:Q:")) >= 0) {
 		if (c == 'q') qthres = atoi(optarg);
 		else if (c == 'p') pc = atof(optarg);
+		else if (c == 'Q') min_baseQ = atoi(optarg);
 	}
 	if (optind == argc) {
-		fprintf(stderr, "Usage: htsbox depth [-q %d] [-p %.2f] <in.bam>\n", qthres, pc);
+		fprintf(stderr, "Usage: htsbox depth [-q %d] [-Q %d] [-p %.2f] <in.bam>\n", qthres, min_baseQ, pc);
 		return 1;
 	}
 	fp = bgzf_open(argv[optind], "r");
@@ -49,9 +50,12 @@ int main_depth(int argc, char *argv[])
 			lower = (int)(n * (1. - pc) + .499);
 			upper = (int)(n * (1. + pc) + .499);
 		}
-		for (i = 0; i < n; ++i)
-			if (p[i].b->core.qual >= qthres)
+		for (i = 0; i < n; ++i) {
+			const bam_pileup1_t *r = &p[i];
+			uint8_t *q = bam_get_qual(r->b);
+			if (r->b->core.qual >= qthres && q[r->qpos] < min_baseQ)
 				++cnt.sum_high;
+		}
 		cnt.sum_all += n, cnt.sum_all2 += n * n, ++cnt.cnt;
 		last_tid = tid, last_pos = pos;
 	}
