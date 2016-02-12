@@ -43,20 +43,23 @@ int main_depth(int argc, char *argv[])
 	bam_plp_set_maxcnt(plp, 1000000);
 	cnt = null_count;
 	while ((p = bam_plp_auto(plp, &tid, &pos, &n)) != 0) {
-		if (tid != last_tid || pos != last_pos + 1 || n < lower || n > upper) {
-			if (last_tid >= 0)
-				print_counts(&cnt, h->target_name[last_tid]);
-			cnt.start = pos;
-			lower = (int)(n * (1. - pc) + .499);
-			upper = (int)(n * (1. + pc) + .499);
-		}
+		int c_all = 0, c_high = 0;
 		for (i = 0; i < n; ++i) {
 			const bam_pileup1_t *r = &p[i];
 			uint8_t *q = bam_get_qual(r->b);
-			if (r->b->core.qual >= qthres && q[r->qpos] >= min_baseQ)
-				++cnt.sum_high;
+			if (q[r->qpos] >= min_baseQ) {
+				++c_all;
+				if (r->b->core.qual >= qthres) ++c_high;
+			}
 		}
-		cnt.sum_all += n, cnt.sum_all2 += n * n, ++cnt.cnt;
+		if (tid != last_tid || pos != last_pos + 1 || c_all < lower || c_all > upper) {
+			if (last_tid >= 0)
+				print_counts(&cnt, h->target_name[last_tid]);
+			cnt.start = pos;
+			lower = (int)(c_all * (1. - pc) + .499);
+			upper = (int)(c_all * (1. + pc) + .499);
+		}
+		cnt.sum_high += c_high, cnt.sum_all += c_all, cnt.sum_all2 += c_all * c_all, ++cnt.cnt;
 		last_tid = tid, last_pos = pos;
 	}
 	if (last_tid >= 0)
