@@ -53,7 +53,7 @@ int main_depth(int argc, char *argv[])
 		for (i = 0; i < n; ++i) {
 			const bam_pileup1_t *r = &p[i];
 			uint8_t *q = bam_get_qual(r->b);
-			if (r->b->core.qual >= qthres && q[r->qpos] < min_baseQ)
+			if (r->b->core.qual >= qthres && q[r->qpos] >= min_baseQ)
 				++cnt.sum_high;
 		}
 		cnt.sum_all += n, cnt.sum_all2 += n * n, ++cnt.cnt;
