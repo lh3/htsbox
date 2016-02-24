@@ -96,6 +96,19 @@ static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *
 		}
 		if (max_diff < 1.0 && max_diff >= 0.0)
 			mark_poor(b, max_diff);
+		if (flag&8) { // replace QUAL with OQ, if present
+			uint8_t *OQ;
+			uint8_t *qual = bam_get_qual(b);
+			OQ = bam_aux_get(b, "OQ");
+			if (OQ != 0) {
+				int i;
+				const char *OQ_str;
+				OQ_str = bam_aux2Z(OQ);
+				for (i = 0; i < b->core.l_qseq; ++i)
+					qual[i] = OQ_str[i] - 33;
+				bam_aux_del(b, OQ);
+			}
+		}
 		sam_write1(out, h, b);
 	} else print_pas(h, b, buf);
 }
@@ -112,11 +125,12 @@ int main_samview(int argc, char *argv[])
 	bam_hdr_t *h;
 	bam1_t *b;
 
-	while ((c = getopt(argc, argv, "IbpSl:t:UL:d:")) >= 0) {
+	while ((c = getopt(argc, argv, "OIbpSl:t:UL:d:")) >= 0) {
 		switch (c) {
 		case 'S': flag |= 1; break;
 		case 'b': flag |= 2; break;
 		case 'p': flag |= 4; break;
+		case 'O': flag |= 8; break;
 		case 'd': max_diff = atof(optarg); break;
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 't': fn_ref = optarg; break;
@@ -125,7 +139,7 @@ int main_samview(int argc, char *argv[])
 		}
 	}
 	if (argc == optind) {
-		fprintf(stderr, "Usage: samview [-bSIp] [-L reg.bed] [-l level] [-d maxDiff] <in.bam>|<in.sam> [region]\n");
+		fprintf(stderr, "Usage: samview [-bSIpO] [-L reg.bed] [-l level] [-d maxDiff] <in.bam>|<in.sam> [region]\n");
 		return 1;
 	}
 	strcpy(moder, "r");
