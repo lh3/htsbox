@@ -3,8 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <ctype.h>
 #include "sam.h"
 #include "kstring.h"
+
+#define QUAL_THRES 20
 
 void *bed_read(const char *fn);
 int bed_overlap(const void *_h, const char *chr, int beg, int end);
@@ -62,8 +65,9 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 static void mark_poor(bam1_t *b, double frac)
 {
 	const uint32_t *cigar = bam_get_cigar(b);
-	uint8_t *pNM;
-	int k, len[16], NM = 0, n_gaps, n_gapo, alen, diff;
+	uint8_t *pNM, *pMD;
+	int k, len[16], NM = 0, n_gaps, n_gapo, alen, n_clips;
+	float n_mm_qual = 0, diff;
 	if ((b->core.flag & 4) || b->core.tid < 0 || b->core.pos < 0) return; // do nothing if unmapped
 	if ((pNM = bam_aux_get(b, "NM")) != 0) NM = bam_aux2i(pNM); // get the NM tag
 	memset(len, 0, 16 * sizeof(int));
@@ -73,9 +77,51 @@ static void mark_poor(bam1_t *b, double frac)
 		if (op == BAM_CINS || op == BAM_CDEL || op == BAM_CREF_SKIP) ++n_gapo;
 	}
 	n_gaps = len[BAM_CINS] + len[BAM_CDEL];
+	n_clips = len[BAM_CSOFT_CLIP] + len[BAM_CHARD_CLIP];
 	if (NM < n_gaps) NM = n_gaps;
-	alen = len[BAM_CMATCH] + len[BAM_CEQUAL] + len[BAM_CDIFF] + len[BAM_CSOFT_CLIP] + len[BAM_CHARD_CLIP] + n_gapo;
-	diff = (NM - n_gaps) + n_gapo + len[BAM_CSOFT_CLIP] + len[BAM_CHARD_CLIP];
+	alen = len[BAM_CMATCH] + len[BAM_CEQUAL] + len[BAM_CDIFF] + n_clips + n_gapo;
+	if ((pMD = bam_aux_get(b, "MD")) != 0) {
+		char *p;
+		uint8_t *qual = bam_get_qual(b), *q;
+		int x, y;
+		q = (uint8_t*)alloca(b->core.l_qseq);
+		for (k = x = y = 0; k < b->core.n_cigar; ++k) {
+			int op = bam_cigar_op(cigar[k]);
+			int len = bam_cigar_oplen(cigar[k]);
+			if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
+				memcpy(q + x, qual + y, len);
+				x += len, y += len;
+			} else if (op == BAM_CINS || op == BAM_CSOFT_CLIP)
+				y += len;
+		}
+		p = bam_aux2Z(pMD);
+		y = 0;
+		while (isdigit(*p)) {
+			y += strtol(p, &p, 10);
+			if (*p == 0) {
+				break;
+			} else if (*p == '^') { // deletion
+				++p;
+				while (isalpha(*p)) ++p;
+			} else {
+				while (isalpha(*p)) {
+					if (y >= x) {
+						y = -1;
+						break;
+					}
+					n_mm_qual += q[y] >= QUAL_THRES? 1. : (float)q[y] * q[y] / (QUAL_THRES * QUAL_THRES);
+					++y, ++p;
+				}
+				if (y == -1) break;
+			}
+		}
+		if (x != y) {
+			fprintf(stderr, "[W::%s] inconsistent MD for read '%s' (%d != %d); ignore MD\n", __func__, bam_get_qname(b), x, y);
+			n_mm_qual = NM - n_gaps;
+		}
+		if (n_mm_qual > NM - n_gaps) n_mm_qual = NM - n_gaps;
+	}
+	diff = (pMD? n_mm_qual : NM - n_gaps) + n_gapo + n_clips;
 	if (diff > alen * frac) b->core.flag |= 0x200;
 }
 
