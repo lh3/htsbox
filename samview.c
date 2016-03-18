@@ -62,12 +62,17 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 	puts(buf->s);
 }
 
+static inline float adj_mm(int q, int thres)
+{
+	return q >= thres? 1. : (float)q * q / (thres * thres);
+}
+
 static void mark_poor(bam1_t *b, double frac)
 {
 	const uint32_t *cigar = bam_get_cigar(b);
-	uint8_t *pNM, *pMD;
+	uint8_t *pNM, *pMD = 0, *qual = bam_get_qual(b);
 	int k, len[16], NM = 0, n_gaps, n_gapo, alen, n_clips;
-	float n_mm_qual = 0, diff;
+	float q_mm = 0., q_clip = 0., diff;
 	if ((b->core.flag & 4) || b->core.tid < 0 || b->core.pos < 0) return; // do nothing if unmapped
 	if ((pNM = bam_aux_get(b, "NM")) != 0) NM = bam_aux2i(pNM); // get the NM tag
 	memset(len, 0, 16 * sizeof(int));
@@ -79,10 +84,21 @@ static void mark_poor(bam1_t *b, double frac)
 	n_gaps = len[BAM_CINS] + len[BAM_CDEL];
 	n_clips = len[BAM_CSOFT_CLIP] + len[BAM_CHARD_CLIP];
 	if (NM < n_gaps) NM = n_gaps;
-	alen = len[BAM_CMATCH] + len[BAM_CEQUAL] + len[BAM_CDIFF] + n_clips + n_gapo;
+	if (n_clips > 0 && b->core.n_cigar > 0) {
+		if (bam_cigar_op(cigar[0]) == BAM_CSOFT_CLIP) {
+			int l = bam_cigar_oplen(cigar[0]);
+			for (k = 0; k < l; ++k)
+				q_clip += adj_mm(qual[k], QUAL_THRES);
+		}
+		if (bam_cigar_op(cigar[b->core.n_cigar - 1]) == BAM_CSOFT_CLIP) {
+			int l = bam_cigar_oplen(cigar[b->core.n_cigar - 1]);
+			for (k = 0; k < l; ++k)
+				q_clip += adj_mm(qual[b->core.l_qseq - 1 - k], QUAL_THRES);
+		}
+	}
 	if ((pMD = bam_aux_get(b, "MD")) != 0) {
 		char *p;
-		uint8_t *qual = bam_get_qual(b), *q;
+		uint8_t *q;
 		int x, y;
 		q = (uint8_t*)alloca(b->core.l_qseq);
 		for (k = x = y = 0; k < b->core.n_cigar; ++k) {
@@ -109,7 +125,7 @@ static void mark_poor(bam1_t *b, double frac)
 						y = -1;
 						break;
 					}
-					n_mm_qual += q[y] >= QUAL_THRES? 1. : (float)q[y] * q[y] / (QUAL_THRES * QUAL_THRES);
+					q_mm += adj_mm(q[y], QUAL_THRES);
 					++y, ++p;
 				}
 				if (y == -1) break;
@@ -117,12 +133,14 @@ static void mark_poor(bam1_t *b, double frac)
 		}
 		if (x != y) {
 			fprintf(stderr, "[W::%s] inconsistent MD for read '%s' (%d != %d); ignore MD\n", __func__, bam_get_qname(b), x, y);
-			n_mm_qual = NM - n_gaps;
+			q_mm = NM - n_gaps;
 		}
-		if (n_mm_qual > NM - n_gaps) n_mm_qual = NM - n_gaps;
-	}
-	diff = (pMD? n_mm_qual : NM - n_gaps) + n_gapo + n_clips;
-	if (diff > alen * frac) b->core.flag |= 0x200;
+		if (q_mm > NM - n_gaps) q_mm = NM - n_gaps;
+	} else q_mm = NM - n_gaps;
+//	printf("%d:%.2f\t%d:%.2f\n", n_clips, q_clip, NM - n_gaps, q_mm);
+	alen = len[BAM_CMATCH] + len[BAM_CEQUAL] + len[BAM_CDIFF] + q_clip + n_gapo;
+	diff = q_mm + n_gapo + q_clip;
+	if (diff > alen * frac) b->core.flag |= 0x204;
 }
 
 static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b, double max_diff, const void *bed)
