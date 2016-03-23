@@ -17,6 +17,7 @@ int main_abreak(int argc, char *argv[]);
 int main_pileup(int argc, char *argv[]);
 int main_faidx(int argc, char *argv[]);
 int main_razip(int argc, char *argv[]);
+int main_bgzip(int argc, char *argv[]);
 int main_mapchk(int argc, char *argv[]);
 int main_depth(int argc, char *argv[]);
 int main_genreg(int argc, char *argv[]);
@@ -33,6 +34,7 @@ static int usage()
 	fprintf(stderr, "         bamidx       index BAM\n");
 	fprintf(stderr, "         bcfidx       index BCF\n");
 	fprintf(stderr, "         faidx        index FASTA\n");
+	fprintf(stderr, "         bgzip        indexed compression\n");
 	fprintf(stderr, "         razip        indexed compression\n\n");
 	fprintf(stderr, "         samsort      sort SAM/BAM in memory\n");
 	fprintf(stderr, "         bamshuf      shuffle BAM and group alignments by query name\n");
@@ -54,6 +56,7 @@ int main(int argc, char *argv[])
 	else if (strcmp(argv[1], "bcfidx") == 0) return main_bcfidx(argc-1, argv+1);
 	else if (strcmp(argv[1], "faidx") == 0) return main_faidx(argc-1, argv+1);
 	else if (strcmp(argv[1], "razip") == 0) return main_razip(argc-1, argv+1);
+	else if (strcmp(argv[1], "bgzip") == 0) return main_bgzip(argc-1, argv+1);
 	else if (strcmp(argv[1], "bamshuf") == 0) return main_bamshuf(argc-1, argv+1);
 	else if (strcmp(argv[1], "bam2fq") == 0) return main_bam2fq(argc-1, argv+1);
 	else if (strcmp(argv[1], "bam2bed") == 0) return main_bam2bed(argc-1, argv+1);

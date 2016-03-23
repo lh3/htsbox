@@ -3,7 +3,7 @@ CFLAGS=		-g -Wall -Wc++-compat -Wno-unused-function -O2
 CPPFLAGS=	-Ihtslib
 OBJS=		main.o samview.o vcfview.o bamidx.o bcfidx.o bamshuf.o bam2fq.o tabix.o \
 			abreak.o bam2bed.o razf.o razip.o faidx.o bedidx.o pileup.o mapchk.o depth.o genreg.o \
-			kthread.o qualbin.o samsort.o
+			kthread.o qualbin.o samsort.o bgzip.o
 PROG=		htsbox
 
 .SUFFIXES:.c .o
