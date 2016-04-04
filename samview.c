@@ -4,6 +4,7 @@
 #include <string.h>
 #include <limits.h>
 #include <ctype.h>
+#include <math.h>
 #include "sam.h"
 #include "kstring.h"
 
@@ -62,12 +63,30 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 	puts(buf->s);
 }
 
+static int drop_cutoff(int l, double e, double r)
+{
+	double en, n = l * e, x = 1., y = 1., *p;
+	int i;
+	en = exp(-n);
+	p = (double*)alloca((l + 1) * sizeof(double));
+	for (i = 0; i <= l; ++i) {
+		p[i] = x / y * en;
+		x *= n;
+		y *= i + 1;
+	}
+	for (i = l - 1; i >= 0; --i) {
+		p[i] += p[i+1];
+		if (p[i] > r) break;
+	}
+	return i;
+}
+
 static inline float adj_mm(int q, int thres)
 {
 	return q >= thres? 1. : (float)q * q / (thres * thres);
 }
 
-static void mark_poor(bam1_t *b, double frac)
+static void mark_poor(bam1_t *b, double drop_coef)
 {
 	const uint32_t *cigar = bam_get_cigar(b);
 	uint8_t *pNM, *pMD = 0, *qual = bam_get_qual(b);
@@ -137,13 +156,14 @@ static void mark_poor(bam1_t *b, double frac)
 		}
 		if (q_mm > NM - n_gaps) q_mm = NM - n_gaps;
 	} else q_mm = NM - n_gaps;
-//	printf("%d:%.2f\t%d:%.2f\n", n_clips, q_clip, NM - n_gaps, q_mm);
 	alen = len[BAM_CMATCH] + len[BAM_CEQUAL] + len[BAM_CDIFF] + q_clip + n_gapo;
 	diff = q_mm + n_gapo + q_clip;
-	if (diff > alen * frac) b->core.flag |= 0x204;
+//	printf("%d:%.2f\t%d:%.2f\tdiff:%.2f\tcutOff:%d\n", n_clips, q_clip, NM - n_gaps, q_mm, diff, drop_cutoff(alen, drop_coef, drop_coef));
+	if (diff > drop_cutoff(alen, drop_coef, drop_coef) + .5)
+		b->core.flag |= 0x204;
 }
 
-static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b, double max_diff, const void *bed)
+static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b, double drop_coef, const void *bed)
 {
 	if (!(flag&4)) {
 		if (bed) {
@@ -158,8 +178,8 @@ static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *
 			if (!bed_overlap(bed, h->target_name[c->tid], c->pos, c->pos + n[0] + n[2] + n[3] + n[7] + n[8]))
 				return;
 		}
-		if (max_diff < 1.0 && max_diff >= 0.0)
-			mark_poor(b, max_diff);
+		if (drop_coef < 1.0 && drop_coef >= 0.0)
+			mark_poor(b, drop_coef);
 		if (flag&8) { // replace QUAL with OQ, if present
 			uint8_t *OQ;
 			uint8_t *qual = bam_get_qual(b);
@@ -183,19 +203,19 @@ int main_samview(int argc, char *argv[])
 	char *fn_ref = 0;
 	int flag = 0, c, clevel = -1, ignore_sam_err = 0;
 	char moder[8];
-	double max_diff = 2.0;
+	double drop_coef = 1.;
 	void *bed = 0;
 	kstring_t buf = {0, 0, 0};
 	bam_hdr_t *h;
 	bam1_t *b;
 
-	while ((c = getopt(argc, argv, "OIbpSl:t:UL:d:")) >= 0) {
+	while ((c = getopt(argc, argv, "OIbpSl:t:UL:d:e:")) >= 0) {
 		switch (c) {
 		case 'S': flag |= 1; break;
 		case 'b': flag |= 2; break;
 		case 'p': flag |= 4; break;
 		case 'O': flag |= 8; break;
-		case 'd': max_diff = atof(optarg); break;
+		case 'e': drop_coef = atof(optarg); break;
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 't': fn_ref = optarg; break;
 		case 'I': ignore_sam_err = 1; break;
@@ -203,7 +223,7 @@ int main_samview(int argc, char *argv[])
 		}
 	}
 	if (argc == optind) {
-		fprintf(stderr, "Usage: samview [-bSIpO] [-L reg.bed] [-l level] [-d maxDiff] <in.bam>|<in.sam> [region]\n");
+		fprintf(stderr, "Usage: samview [-bSIpO] [-L reg.bed] [-l level] [-e dropRate] <in.bam>|<in.sam> [region]\n");
 		return 1;
 	}
 	strcpy(moder, "r");
@@ -238,13 +258,13 @@ int main_samview(int argc, char *argv[])
 					continue;
 				}
 				while (bam_itr_next((BGZF*)in->fp, iter, b) >= 0)
-					print_line(flag, out, &buf, h, b, max_diff, bed);
+					print_line(flag, out, &buf, h, b, drop_coef, bed);
 				hts_itr_destroy(iter);
 			}
 			hts_idx_destroy(idx);
 		} else {
 			while (sam_read1(in, h, b) >= 0)
-				print_line(flag, out, &buf, h, b, max_diff, bed);
+				print_line(flag, out, &buf, h, b, drop_coef, bed);
 		}
 		if (out) sam_close(out);
 	}

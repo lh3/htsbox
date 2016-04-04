@@ -202,7 +202,7 @@ int main_abreak(int argc, char *argv[])
 	stat_t s;
 	bam1_t *b;
 	faidx_t *fai = NULL;
-	char *fname;
+	char *fname = 0;
 	
 	memset(&a, 0, sizeof(aln_t));
 	memset(&s, 0, sizeof(stat_t));
