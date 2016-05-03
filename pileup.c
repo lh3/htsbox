@@ -216,7 +216,7 @@ static void write_fa(paux_t *a, const char *name, int beg, float max_dev, int l_
 int main_pileup(int argc, char *argv[])
 {
 	int i, j, n, tid, beg, end, pos, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_support = 1, min_supp_len = 0;
-	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0, majority_fa = 0, rand_fa = 0, trim_len = 0;
+	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0, majority_fa = 0, rand_fa = 0, trim_len = 0, char_x = 'X';
 	int last_tid, last_pos;
 	float max_dev = 3.0, div_coef = 1.;
 	const bam_pileup1_t **plp;
@@ -230,7 +230,7 @@ int main_pileup(int argc, char *argv[])
 	void *bed = 0;
 
 	// parse the command line
-	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:uRMb:T:")) >= 0) {
+	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:uRMb:T:x:")) >= 0) {
 		if (n == 'f') { fname = optarg; fai = fai_load(fname); }
 		else if (n == 'b') bed = bed_read(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
@@ -249,6 +249,7 @@ int main_pileup(int argc, char *argv[])
 		else if (n == 'M') majority_fa = is_fa = 1;
 		else if (n == 'R') rand_fa = is_fa = 1;
 		else if (n == 'T') trim_len = atoi(optarg);
+		else if (n == 'x') char_x = toupper(*optarg);
 		else if (n == 'u') {
 			baseQ = 3; mapQ = 20; qual_as_depth = 1;
 			min_supp_len = 300; min_support = 5; div_coef = .01;
@@ -292,6 +293,7 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "         -F         output the consensus in FASTA\n");
 		fprintf(stderr, "         -M         majority-allele FASTA (majfa; force -F)\n");
 		fprintf(stderr, "         -R         random-allele FASTA (randfa; force -F)\n");
+		fprintf(stderr, "         -x CHAR    character for bases identical to the reference [%c]\n", char_x);
 		fprintf(stderr, "         -D FLOAT   soft mask if sumQ > avgSum+FLOAT*sqrt(avgSum) (force -F) [%.2f]\n", max_dev);
 		fprintf(stderr, "\n");
 		fprintf(stderr, "         -u         unitig calling mode (-d -V.01 -S300 -q20 -Q3 -s5)\n");
@@ -463,7 +465,7 @@ int main_pileup(int argc, char *argv[])
 					for (i = c = 0; i < aux.n_a; ++i) c |= a[i].b;
 				}
 				for (i = 0; i < aux.n_a; ++i) sum_dp += qual_as_depth? a[i].q : 1;
-				c = (r == 1 || r == 2 || r == 4 || r == 8) && c == r? 'X' : seq_nt16_str[c];
+				c = (r == 1 || r == 2 || r == 4 || r == 8) && c == r? char_x : seq_nt16_str[c];
 				if (is_ambi) c = tolower(c);
 				aux.seq[pos - beg] = c;
 				aux.depth[pos - beg] = sum_dp;
