@@ -427,11 +427,20 @@ int main_pileup(int argc, char *argv[])
 				if (majority_fa || rand_fa) {
 					int allele;
 					if (majority_fa) {
-						int max = 0, max2 = 0, max_k = -1, max2_k = -1;
-						for (k = 0; k < aux.n_alleles; ++k)
-							if (aux.support[k] > max) max2 = max, max2_k = max_k, max = aux.support[k], max_k = k;
-							else if (aux.support[k] > max2) max2 = aux.support[k], max2_k = k;
-						if (max == max2 && drand48() < .5) max = max2, max_k = max2_k; // break the tie
+						int max = 0, max_k = -1, n_max = 0;
+						for (k = max = 0; k < aux.n_alleles; ++k)
+							if (aux.support[k] > max) max = aux.support[k], max_k = k;
+						assert(max_k >= 0);
+						for (k = n_max = 0; k < aux.n_alleles; ++k)
+							if (aux.support[k] == max) ++n_max;
+						if (n_max > 1) {
+							int r;
+							r = (int)(n_max * drand48());
+							if (r == n_max) r = n_max - 1;
+							for (k = n_max = 0; k < aux.n_alleles; ++k)
+								if (aux.support[k] == max && n_max++ == r)
+									max_k = k;
+						}
 						allele = max_k;
 						if (del_supp > max) is_ambi = 1;
 					} else {
