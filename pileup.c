@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <assert.h>
+#include <limits.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <math.h>
@@ -180,11 +181,12 @@ static void count_alleles(paux_t *pa, int n, int qual_as_depth)
 	}
 }
 
-static void write_fa(paux_t *a, const char *name, int beg, float max_dev)
+static void write_fa(paux_t *a, const char *name, int beg, float max_dev, int l_ref)
 {
 	int i, n_pos, max_dp;
 	uint64_t sum_dp;
 	double avg_dp, max_dp_real;
+	if (l_ref == 0) l_ref = INT_MAX;
 	for (i = 0, sum_dp = 0, n_pos = 0; i < a->len; ++i)
 		if (a->seq[i] != 'n' && a->seq[i] != 'N')
 			++n_pos, sum_dp += a->depth[i];
@@ -198,10 +200,15 @@ static void write_fa(paux_t *a, const char *name, int beg, float max_dev)
 	}
 	printf(">%s", name);
 	if (beg > 0) printf(":%d", beg + 1);
-	for (i = 0; i < a->len; ++i) {
+	for (i = 0; i < a->len && i < l_ref; ++i) {
 		if (i%60 == 0) putchar('\n');
 		putchar(a->seq[i]);
 	}
+	if (l_ref < INT_MAX)
+		for (; i < l_ref; ++i) {
+			if (i%60 == 0) putchar('\n');
+			putchar('N');
+		}
 	putchar('\n');
 	fprintf(stderr, "[M::%s] average depth for contig '%s': %.2f\n", __func__, name, avg_dp);
 }
@@ -366,7 +373,7 @@ int main_pileup(int argc, char *argv[])
 		for (i = aux.tot_dp = 0; i < n; ++i) aux.tot_dp += n_plp[i];
 		if (last_tid != tid) {
 			if (is_fa && last_tid >= 0)
-				write_fa(&aux, h->target_name[last_tid], 0, max_dev);
+				write_fa(&aux, h->target_name[last_tid], 0, max_dev, l_ref);
 			if (fai) { // switch of chromosomes
 				free(ref);
 				ref = fai_fetch(fai, h->target_name[tid], &l_ref);
@@ -515,7 +522,7 @@ int main_pileup(int argc, char *argv[])
 		} // ~if(aux.tot_dp)
 	} // ~while()
 	if (is_fa && last_tid >= 0)
-		write_fa(&aux, h->target_name[last_tid], 0, max_dev);
+		write_fa(&aux, h->target_name[last_tid], 0, max_dev, l_ref);
 	free(n_plp); free(plp);
 	bam_mplp_destroy(mplp);
 
