@@ -139,9 +139,9 @@ static inline void print_allele(const bam_pileup1_t *p, int l_ref, const char *r
 typedef struct {
 	int n_a, n_alleles, max_del; // n_a: #reads used to compute quality sum; max_del: max deletion length
 	int tot_dp, max_dp, n_cnt, max_cnt;
-	allele_t *a; // allele of each read, of size tot_dp
+	allele_t *a; // allele of each read, of size $n_a
 	int *cnt_strand, *cnt_supp; // cnt_strand: count of supporting reads on both strands; cnt_supp: sum of both strands
-	int *support; // support across entire _a_. It points to the last "row" of cnt_q.
+	int *support; // support across entire $a. It points to the last "row" of cnt_q.
 
 	int len, max_len;
 	char *seq;
@@ -209,7 +209,7 @@ static void write_fa(paux_t *a, const char *name, int beg, float max_dev)
 int main_pileup(int argc, char *argv[])
 {
 	int i, j, n, tid, beg, end, pos, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_support = 1, min_supp_len = 0;
-	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0, majority_fa = 0, trim_len = 0;
+	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0, majority_fa = 0, rand_fa = 0, trim_len = 0;
 	int last_tid, last_pos;
 	float max_dev = 3.0, div_coef = 1.;
 	const bam_pileup1_t **plp;
@@ -223,7 +223,7 @@ int main_pileup(int argc, char *argv[])
 	void *bed = 0;
 
 	// parse the command line
-	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:uMb:T:")) >= 0) {
+	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:uRMb:T:")) >= 0) {
 		if (n == 'f') { fname = optarg; fai = fai_load(fname); }
 		else if (n == 'b') bed = bed_read(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
@@ -240,6 +240,7 @@ int main_pileup(int argc, char *argv[])
 		else if (n == 'D') max_dev = atof(optarg), is_fa = 1;
 		else if (n == 'F') is_fa = 1;
 		else if (n == 'M') majority_fa = is_fa = 1;
+		else if (n == 'R') rand_fa = is_fa = 1;
 		else if (n == 'T') trim_len = atoi(optarg);
 		else if (n == 'u') {
 			baseQ = 3; mapQ = 20; qual_as_depth = 1;
@@ -251,8 +252,12 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "[E::%s] option -F cannot be used with -c\n", __func__);
 		return 1;
 	}
+	if (majority_fa && rand_fa) {
+		fprintf(stderr, "[E::%s] option -M and -R can't be applied at the same time\n", __func__);
+		return 1;
+	}
 	if (is_fa) var_only = 0;
-	if (is_fa && !majority_fa && min_support <= 1)
+	if (is_fa && !majority_fa && !rand_fa && min_support <= 1)
 		fprintf(stderr, "[W::%s] with option -F, setting a reasonable -s is highly recommended.\n", __func__);
 	if (is_vcf && fai == 0) {
 		fprintf(stderr, "[E::%s] with option -c, the reference genome must be provided.\n", __func__);
@@ -278,7 +283,8 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "         -C         show count of each allele on both strands\n");
 		fprintf(stderr, "\n");
 		fprintf(stderr, "         -F         output the consensus in FASTA\n");
-		fprintf(stderr, "         -M         majority FASTA (force -F)\n");
+		fprintf(stderr, "         -M         majority-allele FASTA (majfa; force -F)\n");
+		fprintf(stderr, "         -R         random-allele FASTA (randfa; force -F)\n");
 		fprintf(stderr, "         -D FLOAT   soft mask if sumQ > avgSum+FLOAT*sqrt(avgSum) (force -F) [%.2f]\n", max_dev);
 		fprintf(stderr, "\n");
 		fprintf(stderr, "         -u         unitig calling mode (-d -V.01 -S300 -q20 -Q3 -s5)\n");
@@ -411,18 +417,30 @@ int main_pileup(int argc, char *argv[])
 				for (j = del_supp = 0; j < n_plp[0]; ++j) // count reads supporting a deletion at this position
 					if (plp[0][j].is_del)
 						del_supp += qual_as_depth? bam_get_qual(plp[0][j].b)[plp[0][j].qpos] : 1;
-				if (majority_fa) {
-					int max = 0, max2 = 0, max_k = -1, max2_k = -1;
-					for (k = 0; k < aux.n_alleles; ++k)
-						if (aux.support[k] > max) max2 = max, max2_k = max_k, max = aux.support[k], max_k = k;
-						else if (aux.support[k] > max2) max2 = aux.support[k], max2_k = k;
-					if (max == max2 && drand48() < .5) max = max2, max_k = max2_k;
+				if (majority_fa || rand_fa) {
+					int allele;
+					if (majority_fa) {
+						int max = 0, max2 = 0, max_k = -1, max2_k = -1;
+						for (k = 0; k < aux.n_alleles; ++k)
+							if (aux.support[k] > max) max2 = max, max2_k = max_k, max = aux.support[k], max_k = k;
+							else if (aux.support[k] > max2) max2 = aux.support[k], max2_k = k;
+						if (max == max2 && drand48() < .5) max = max2, max_k = max2_k; // break the tie
+						allele = max_k;
+						if (del_supp > max) is_ambi = 1;
+					} else {
+						double r;
+						int tot;
+						for (k = tot = 0; k < aux.n_alleles; ++k) tot += aux.support[k];
+						r = tot * drand48();
+						for (k = tot = 0; k < aux.n_alleles && tot + aux.support[k] < r; ++k)
+							tot += aux.support[k];
+						allele = k < aux.n_alleles? k : aux.n_alleles - 1;
+					}
 					for (i = 0; i < aux.n_a; ++i)
-						if (a[i].k == max_k) break;
+						if (a[i].k == allele) break;
 					assert(i < aux.n_a);
 					c = a[i].b;
 					if (c != 1 && c != 2 && c != 4 && c != 8) c = 15, is_ambi = 1;
-					if (del_supp > max) is_ambi = 1;
 				} else {
 					if (del_supp >= min_support) is_ambi = 1;
 					if (aux.n_alleles > 2) is_ambi = 1;
