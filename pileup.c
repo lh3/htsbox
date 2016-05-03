@@ -447,7 +447,7 @@ int main_pileup(int argc, char *argv[])
 					for (i = c = 0; i < aux.n_a; ++i) c |= a[i].b;
 				}
 				for (i = 0; i < aux.n_a; ++i) sum_dp += qual_as_depth? a[i].q : 1;
-				c = seq_nt16_str[c];
+				c = (r == 1 || r == 2 || r == 4 || r == 8) && c == r? 'X' : seq_nt16_str[c];
 				if (is_ambi) c = tolower(c);
 				aux.seq[pos - beg] = c;
 				aux.depth[pos - beg] = sum_dp;
