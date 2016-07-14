@@ -47,7 +47,7 @@ static void lt_opt_init(lt_opt_t *opt)
 	opt->max_qual = 50;
 	opt->min_seq_len = 30;
 	opt->max_ovlp_pen = 3;
-	opt->min_ovlp_len = 10;
+	opt->min_ovlp_len = 15;
 	opt->max_adap_pen = 2;
 	opt->min_adap_len = 5;
 	opt->bc_len[0] = opt->bc_len[1] = 0;
@@ -287,7 +287,7 @@ bseq1_t *bseq_read(kseq_t *ks, int chunk_size, int *n_)
 		bseq1_t *s;
 		if (n >= m) {
 			m = m? m<<1 : 256;
-			seqs = realloc(seqs, m * sizeof(bseq1_t));
+			seqs = (bseq1_t*)realloc(seqs, m * sizeof(bseq1_t));
 		}
 		s = &seqs[n];
 		s->name = strdup(ks->name.s);
@@ -585,7 +585,7 @@ static void *worker_pipeline(void *shared, int step, void *_data)
 	lt_global_t *g = (lt_global_t*)shared;
 	if (step == 0) {
 		data_for_t *ret;
-		ret = calloc(1, sizeof(data_for_t));
+		ret = (data_for_t*)calloc(1, sizeof(data_for_t));
 		ret->seqs = bseq_read(g->ks, g->opt.chunk_size, &ret->n_seqs);
 		assert((ret->n_seqs&1) == 0);
 		ret->g = g;
