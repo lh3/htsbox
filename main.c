@@ -23,6 +23,7 @@ int main_depth(int argc, char *argv[]);
 int main_genreg(int argc, char *argv[]);
 int main_qualbin(int argc, char *argv[]);
 int main_samsort(int argc, char *argv[]);
+int main_peovlp(int argc, char *argv[]);
 
 static int usage()
 {
@@ -43,6 +44,7 @@ static int usage()
 	fprintf(stderr, "         qualbin      quality binning\n");
 	fprintf(stderr, "         pileup       summary pileup\n");
 	fprintf(stderr, "         abreak       summarize assembly break points\n");
+	fprintf(stderr, "         peovlp       merge overlapping ends and trim adapters\n");
 	fprintf(stderr, "\n");
 	return 1;
 }
@@ -68,6 +70,7 @@ int main(int argc, char *argv[])
 	else if (strcmp(argv[1], "depth") == 0) return main_depth(argc-1, argv+1);
 	else if (strcmp(argv[1], "genreg") == 0) return main_genreg(argc-1, argv+1);
 	else if (strcmp(argv[1], "qualbin") == 0) return main_qualbin(argc-1, argv+1);
+	else if (strcmp(argv[1], "peovlp") == 0) return main_peovlp(argc-1, argv+1);
 	else {
 		fprintf(stderr, "[E::%s] unrecognized command '%s'\n", __func__, argv[1]);
 		return 1;
