@@ -28,7 +28,7 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 	} else {
 		const uint32_t *cigar = bam_get_cigar(b);
 		const uint8_t *tag;
-		int clip[2], k, m = 0, nm = 0, od = 0, oi = 0, os = 0, ns = 0, nd = 0, ni = 0, ql = 0, tl = 0, is_rev = !!bam_is_rev(b);
+		int clip[2], k, m = 0, mm = 0, nm = 0, od = 0, oi = 0, os = 0, ns = 0, nd = 0, ni = 0, ql = 0, tl = 0, is_rev = !!bam_is_rev(b);
 		clip[0] = clip[1] = 0;
 		for (k = 0; k < b->core.n_cigar; ++k) {
 			int op = bam_cigar_op(cigar[k]);
@@ -54,7 +54,8 @@ static void print_pas(const bam_hdr_t *h, const bam1_t *b, kstring_t *buf)
 		kputw(tl, buf); kputc('\t', buf);
 		kputw(b->core.pos, buf); kputc('\t', buf);
 		kputw(b->core.pos + m + nd + ns, buf); kputc('\t', buf);
-		ksprintf(buf, "%d\t%d\t%d\tmm:i:%d\tio:i:%d\tin:i:%d\tdo:i:%d\tdn:i:%d", nm, m + ni + nd, b->core.qual, nm - ni - nd, oi, ni, od, nd);
+		mm = nm - ni - nd;
+		ksprintf(buf, "%d\t%d\t%d\tmm:i:%d\tio:i:%d\tin:i:%d\tdo:i:%d\tdn:i:%d", m - mm, m + ni + nd, b->core.qual, mm, oi, ni, od, nd);
 		tag = bam_aux_get(b, "AS");
 		if (tag) ksprintf(buf, "\tAS:i:%d", bam_aux2i(tag));
 	}
