@@ -110,7 +110,7 @@ extern "C" {
 	bam1_t *bam_init1(void);
 	void bam_destroy1(bam1_t *b);
 	int bam_read1(BGZF *fp, bam1_t *b);
-	int bam_write1(BGZF *fp, bam1_t *b);
+	int bam_write1(BGZF *fp, const bam1_t *b);
 	bam1_t *bam_copy1(bam1_t *bdst, const bam1_t *bsrc);
 	int bam_readrec(BGZF *fp, void *null, bam1_t *b, int *tid, int *beg, int *end);
 
@@ -144,7 +144,7 @@ extern "C" {
 	int sam_parse1(kstring_t *s, bam_hdr_t *h, bam1_t *b);
 	int sam_format1(const bam_hdr_t *h, const bam1_t *b, kstring_t *str);
 	int sam_read1(samFile *fp, bam_hdr_t *h, bam1_t *b);
-	int sam_write1(samFile *fp, const bam_hdr_t *h, bam1_t *b);
+	int sam_write1(samFile *fp, const bam_hdr_t *h, const bam1_t *b);
 
 	/*************************************
 	 *** Manipulating auxiliary fields ***
@@ -157,7 +157,6 @@ extern "C" {
 	char *bam_aux2Z(const uint8_t *s);
 
 	void bam_aux_append(bam1_t *b, const char tag[2], char type, int len, const void *data);
-	void bam_aux_append_B(bam1_t *b, const char tag[2], char type, int len, const void *data);
 	int bam_aux_del(bam1_t *b, uint8_t *s);
 
 #ifdef __cplusplus

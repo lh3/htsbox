@@ -235,19 +235,6 @@ static void swap_data(const bam1_core_t *c, int l_data, uint8_t *data)
 	}
 }
 
-void bam_cigar2tag(bam1_t *b)
-{
-	uint32_t n_cigar = b->core.n_cigar, cigar_st, cigar_en;
-	if (n_cigar <= 65535) return;
-	cigar_st = (uint8_t*)bam_get_cigar(b) - b->data;
-	cigar_en = cigar_st + n_cigar * 4;
-	bam_aux_append_B(b, "CG", 'I', n_cigar, b->data + cigar_st);
-	memmove(b->data + cigar_st, b->data + cigar_en, b->l_data - cigar_en);
-	b->l_data -= n_cigar * 4;
-	b->core.n_cigar = 0;
-	b->core.flag |= BAM_FUNMAP;
-}
-
 void bam_tag2cigar(bam1_t *b)
 {
 	bam1_core_t *c = &b->core;
@@ -307,32 +294,43 @@ int bam_read1(BGZF *fp, bam1_t *b)
 	return 4 + block_len;
 }
 
-int bam_write1(BGZF *fp, bam1_t *b)
+int bam_write1(BGZF *fp, const bam1_t *b)
 {
 	const bam1_core_t *c = &b->core;
-	uint32_t x[8], block_len, y, n_cigar_ori = c->n_cigar;
-	int i;
-	if (n_cigar_ori > 0xffff) bam_cigar2tag(b);
-	block_len = b->l_data + 32;
+	uint32_t x[8], block_len, y;
+	block_len = c->n_cigar <= 0xffff? b->l_data + 32 : b->l_data + 40;
 	x[0] = c->tid;
 	x[1] = c->pos;
 	x[2] = (uint32_t)c->bin<<16 | c->qual<<8 | c->l_qname;
-	x[3] = (uint32_t)c->flag<<16 | (c->n_cigar & 0xffff);
+	if (c->n_cigar > 0xffff) x[3] = (uint32_t)(c->flag | BAM_FUNMAP) << 16;
+	else x[3] = (uint32_t)c->flag << 16 | (c->n_cigar & 0xffff);
 	x[4] = c->l_qseq;
 	x[5] = c->mtid;
 	x[6] = c->mpos;
 	x[7] = c->isize;
 	bgzf_flush_try(fp, 4 + block_len);
 	if (fp->is_be) {
+		int i;
 		for (i = 0; i < 8; ++i) ed_swap_4p(x + i);
 		y = block_len;
 		bgzf_write(fp, ed_swap_4p(&y), 4);
 		swap_data(c, b->l_data, b->data);
 	} else bgzf_write(fp, &block_len, 4);
 	bgzf_write(fp, x, 32);
-	bgzf_write(fp, b->data, b->l_data);
+	if (c->n_cigar <= 0xffff) {
+		bgzf_write(fp, b->data, b->l_data);
+	} else {
+		uint32_t cigar_st, cigar_en;
+		cigar_st = (uint8_t*)bam_get_cigar(b) - b->data;
+		cigar_en = cigar_st + c->n_cigar * 4;
+		bgzf_write(fp, b->data, cigar_st); // write data before CIGAR
+		bgzf_write(fp, &b->data[cigar_en], b->l_data - cigar_en); // write data after CIGAR
+		memcpy(&x[0], "CGBI", 4);
+		x[1] = c->n_cigar;
+		bgzf_write(fp, x, 8); // write CG:B:I and length
+		bgzf_write(fp, &b->data[cigar_st], c->n_cigar * 4); // write the real CIGAR
+	}
 	if (fp->is_be) swap_data(c, b->l_data, b->data);
-	if (n_cigar_ori > 0xffff) bam_tag2cigar(b);
 	return 4 + block_len;
 }
 
@@ -752,7 +750,7 @@ int sam_format1(const bam_hdr_t *h, const bam1_t *b, kstring_t *str)
 	return str->l;
 }
 
-int sam_write1(htsFile *fp, const bam_hdr_t *h, bam1_t *b)
+int sam_write1(htsFile *fp, const bam_hdr_t *h, const bam1_t *b)
 {
 	if (!fp->is_bin) {
 		sam_format1(h, b, &fp->line);
@@ -786,23 +784,6 @@ void bam_aux_append(bam1_t *b, const char tag[2], char type, int len, const void
 	b->data[ori_len] = tag[0]; b->data[ori_len + 1] = tag[1];
 	b->data[ori_len + 2] = type;
 	memcpy(b->data + ori_len + 3, data, len);
-}
-
-void bam_aux_append_B(bam1_t *b, const char tag[2], char type, int len, const void *data)
-{
-	int32_t len32 = len, ori_len = b->l_data, type_len;
-	type_len = bam_aux_type2size(type);
-	if (type_len == 0) return; // invalid type
-	b->l_data += 8 + len * type_len;
-	if (b->m_data < b->l_data) {
-		b->m_data = b->l_data;
-		kroundup32(b->m_data);
-		b->data = (uint8_t*)realloc(b->data, b->m_data);
-	}
-	b->data[ori_len] = tag[0]; b->data[ori_len + 1] = tag[1];
-	b->data[ori_len + 2] = 'B'; b->data[ori_len + 3] = type;
-	memcpy(&b->data[ori_len + 4], &len32, 4);
-	memcpy(&b->data[ori_len + 8], data, (size_t)len * type_len);
 }
 
 #define __skip_tag(s) do { \
