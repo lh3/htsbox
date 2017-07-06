@@ -230,6 +230,10 @@ int main_samview(int argc, char *argv[])
 
 	in = sam_open(argv[optind], moder, fn_ref);
 	h = sam_hdr_read(in);
+	if (h == 0) {
+		fprintf(stderr, "[E::%s] failed to parse the SAM header\n", __func__);
+		return 1;
+	}
 	h->ignore_sam_err = ignore_sam_err;
 	b = bam_init1();
 
