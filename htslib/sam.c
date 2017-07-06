@@ -643,7 +643,7 @@ int sam_parse1(kstring_t *s, bam_hdr_t *h, bam1_t *b)
 		} else _parse_err(1, "unrecognized type");
 	}
 	b->data = (uint8_t*)str.s; b->l_data = str.l; b->m_data = str.m;
-//	bam_tag2cigar(b);
+	bam_tag2cigar(b);
 	return 0;
 
 #undef _parse_warn
