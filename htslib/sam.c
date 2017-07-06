@@ -325,9 +325,11 @@ int bam_write1(BGZF *fp, const bam1_t *b)
 		cigar_en = cigar_st + c->n_cigar * 4;
 		bgzf_write(fp, b->data, cigar_st); // write data before CIGAR
 		bgzf_write(fp, &b->data[cigar_en], b->l_data - cigar_en); // write data after CIGAR
-		memcpy(&x[0], "CGBI", 4);
-		x[1] = fp->is_be? ed_swap_4(c->n_cigar) : c->n_cigar;
-		bgzf_write(fp, x, 8); // write CG:B:I and length
+		bgzf_write(fp, "CGBI", 4); // write CG:B,I
+		if (fp->is_be) {
+			y = c->n_cigar;
+			bgzf_write(fp, ed_swap_4p(&y), 4);
+		} else bgzf_write(fp, &c->n_cigar, 4);
 		bgzf_write(fp, &b->data[cigar_st], c->n_cigar * 4); // write the real CIGAR
 	}
 	if (fp->is_be) swap_data(c, b->l_data, b->data);
