@@ -36,9 +36,7 @@ depend:
 
 abreak.o: boxver.h faidx.h
 faidx.o: faidx.h razf.h
-fsi.o: htslib/bgzf.h htslib/sam.h htslib/bgzf.h htslib/hts.h
 main.o: boxver.h
-mapchk.alt.o: faidx.h
 mapchk.o: faidx.h
 peovlp.o: kvec.h
 pileup.o: faidx.h boxver.h
