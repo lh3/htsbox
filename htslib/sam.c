@@ -235,31 +235,39 @@ static void swap_data(const bam1_core_t *c, int l_data, uint8_t *data)
 	}
 }
 
-void bam_tag2cigar(bam1_t *b)
+int bam_tag2cigar(bam1_t *b)
 {
 	bam1_core_t *c = &b->core;
-	uint32_t cigar_st, n_cigar4, CG_st, CG_en, ori_len = b->l_data;
+	uint32_t cigar_st, n_cigar4, CG_st, CG_en, ori_len = b->l_data, *cigar0, CG_len;
 	uint8_t *CG;
-	if (c->n_cigar > 0 || !(c->flag & BAM_FUNMAP) || c->tid < 0 || c->pos < 0) return;
-	if ((CG = bam_aux_get(b, "CG")) == 0) return;
-	if (CG[0] != 'B' || CG[1] != 'I') return;
-	cigar_st = (uint8_t*)bam_get_cigar(b) - b->data;
-	c->n_cigar = *(uint32_t*)(CG + 2);
+
+	// test where there is a real CIGAR in the CG tag to move
+	if (c->n_cigar != 1 || c->tid < 0 || c->pos < 0) return 0;
+	cigar0 = bam_get_cigar(b);
+	if (bam_cigar_op(cigar0[0]) != BAM_CSOFT_CLIP || bam_cigar_oplen(cigar0[0]) != c->l_qseq) return 0;
+	if ((CG = bam_aux_get(b, "CG")) == 0) return 0; // no CG tag
+	if (CG[0] != 'B' || CG[1] != 'I') return 0; // not of type B,I
+	CG_len = *(uint32_t*)(CG + 2);
+	if (CG_len == 0) return 0; // nothing to move
+
+	// move from the CG tag to the right position
+	cigar_st = (uint8_t*)cigar0 - b->data;
+	c->n_cigar = CG_len;
 	n_cigar4 = c->n_cigar * 4;
 	CG_st = CG - b->data - 2;
 	CG_en = CG_st + 8 + n_cigar4;
-	b->l_data += n_cigar4;
+	b->l_data += n_cigar4 - 4; // we need (c->n_cigar-1)*4 bytes to swap CIGAR to the right place
 	if (b->m_data < b->l_data) {
 		b->m_data = b->l_data;
 		kroundup32(b->m_data);
 		b->data = (uint8_t*)realloc(b->data, b->m_data);
 	}
-	memmove(b->data + cigar_st + n_cigar4, b->data + cigar_st, ori_len - cigar_st); // make room for the real CIGAR
-	memcpy(b->data + cigar_st, b->data + n_cigar4 + CG_st + 8, n_cigar4); // copy the real CIGAR to the right place
-	if (ori_len > CG_en)
-		memmove(b->data + CG_st + n_cigar4, b->data + CG_en + n_cigar4, ori_len - CG_en);
-	b->l_data -= n_cigar4 + 8;
-	c->flag &= ~BAM_FUNMAP;
+	memmove(b->data + cigar_st + n_cigar4, b->data + cigar_st + 4, ori_len - (cigar_st + 4)); // insert 4*(c->n_cigar-1) empty space to make room
+	memcpy(b->data + cigar_st, b->data + (n_cigar4 - 4) + CG_st + 8, n_cigar4); // copy the real CIGAR to the right place; -4 for the fake CIGAR
+	if (ori_len > CG_en) // move data after the CG tag
+		memmove(b->data + CG_st + n_cigar4 - 4, b->data + CG_en + n_cigar4 - 4, ori_len - CG_en);
+	b->l_data -= n_cigar4 + 8; // 8: CGBI (4 bytes) and CGBI length (4)
+	return 1;
 }
 
 int bam_read1(BGZF *fp, bam1_t *b)
@@ -294,42 +302,46 @@ int bam_read1(BGZF *fp, bam1_t *b)
 	return 4 + block_len;
 }
 
+static inline uint8_t *u32_to_le(uint32_t val, uint8_t *buf)
+{
+	buf[0] = val & 0xff; buf[1] = (val >> 8) & 0xff; buf[2] = (val >> 16) & 0xff; buf[3] = (val >> 24) & 0xff;
+	return buf;
+}
+
 int bam_write1(BGZF *fp, const bam1_t *b)
 {
 	const bam1_core_t *c = &b->core;
-	uint32_t x[8], block_len, y;
-	block_len = c->n_cigar <= 0xffff? b->l_data + 32 : b->l_data + 40;
+	uint32_t i, x[8], block_len = b->l_data + 32;
+	uint8_t buf[4];
+	if (c->n_cigar > 0xffff) block_len += 12;
 	x[0] = c->tid;
 	x[1] = c->pos;
 	x[2] = (uint32_t)c->bin<<16 | c->qual<<8 | c->l_qname;
-	if (c->n_cigar > 0xffff) x[3] = (uint32_t)(c->flag | BAM_FUNMAP) << 16;
-	else x[3] = (uint32_t)c->flag << 16 | (c->n_cigar & 0xffff);
+	if (c->n_cigar > 0xffff) x[3] = (uint32_t)c->flag << 16 | 1;
+	else x[3] = (uint32_t)c->flag << 16 | c->n_cigar;
 	x[4] = c->l_qseq;
 	x[5] = c->mtid;
 	x[6] = c->mpos;
 	x[7] = c->isize;
 	bgzf_flush_try(fp, 4 + block_len);
 	if (fp->is_be) {
-		int i;
 		for (i = 0; i < 8; ++i) ed_swap_4p(x + i);
-		y = block_len;
-		bgzf_write(fp, ed_swap_4p(&y), 4);
 		swap_data(c, b->l_data, b->data);
-	} else bgzf_write(fp, &block_len, 4);
+	}
+	bgzf_write(fp, u32_to_le(block_len, buf), 4);
 	bgzf_write(fp, x, 32);
 	if (c->n_cigar <= 0xffff) {
 		bgzf_write(fp, b->data, b->l_data);
 	} else {
-		uint32_t cigar_st, cigar_en;
+		uint32_t cigar_st, cigar_en, cigar1;
 		cigar_st = (uint8_t*)bam_get_cigar(b) - b->data;
 		cigar_en = cigar_st + c->n_cigar * 4;
-		bgzf_write(fp, b->data, cigar_st); // write data before CIGAR
+		cigar1 = (uint32_t)c->l_qseq << 4 | BAM_CSOFT_CLIP;
+		bgzf_write(fp, b->data, c->l_qname); // write data before cigar
+		bgzf_write(fp, u32_to_le(cigar1, buf), 4); // write cigar: <read_length>S
 		bgzf_write(fp, &b->data[cigar_en], b->l_data - cigar_en); // write data after CIGAR
 		bgzf_write(fp, "CGBI", 4); // write CG:B,I
-		if (fp->is_be) {
-			y = c->n_cigar;
-			bgzf_write(fp, ed_swap_4p(&y), 4);
-		} else bgzf_write(fp, &c->n_cigar, 4);
+		bgzf_write(fp, u32_to_le(c->n_cigar, buf), 4); // write the true CIGAR length
 		bgzf_write(fp, &b->data[cigar_st], c->n_cigar * 4); // write the real CIGAR
 	}
 	if (fp->is_be) swap_data(c, b->l_data, b->data);
