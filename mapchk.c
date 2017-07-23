@@ -155,6 +155,7 @@ int main_mapchk(int argc, char *argv[])
 		for (i = 0; i < n_plp; ++i) {
 			const bam_pileup1_t *p = &plp[i];
 			int x = p->qpos, b = p->aux>>8, q = p->aux&0xff, is_rev = !!bam_is_rev(p->b);
+			if (p->is_del) continue;
 			if (is_rev) {
 				x = p->b->core.l_qseq - 1 - p->qpos;
 				b = b < 4? 3 - b : 4;

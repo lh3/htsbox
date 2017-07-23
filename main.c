@@ -41,6 +41,7 @@ static int usage()
 	fprintf(stderr, "         bamshuf      shuffle BAM and group alignments by query name\n");
 	fprintf(stderr, "         bam2fq       convert name grouped BAM to interleaved fastq\n");
 	fprintf(stderr, "         bam2bed      BAM->BED conversion\n");
+	fprintf(stderr, "         mapchk       check empirical base quality\n");
 	fprintf(stderr, "         qualbin      quality binning\n");
 	fprintf(stderr, "         pileup       summary pileup\n");
 	fprintf(stderr, "         abreak       summarize assembly break points\n");
