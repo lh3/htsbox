@@ -6,6 +6,10 @@
 #include "sam.h"
 #include "faidx.h"
 
+void *bed_read(const char *fn);
+int bed_overlap(const void *_h, const char *chr, int beg, int end);
+void bed_destroy(void *_h);
+
 typedef struct {
 	int64_t q[94][5][8]; // qual, read base, ref base (5=ins, 6=del, 7=clip)
 } errstat_t;
@@ -70,6 +74,8 @@ static void print_stat(errstat_t *e, int pos, int qthres)
 typedef struct {
 	BGZF *fp;
 	hts_itr_t *itr;
+	bam_hdr_t *h;
+	void *bed;
 } aux_t;
 
 static int read1_plp(void *data, bam1_t *b)
@@ -79,25 +85,34 @@ static int read1_plp(void *data, bam1_t *b)
 	ret = a->itr? bam_itr_next(a->fp, a->itr, b) : bam_read1(a->fp, b);
 	if ((b->core.flag & (BAM_FSECONDARY|BAM_FSUPP)) || b->core.tid < 0)
 		b->core.flag |= BAM_FUNMAP;
+	else if (a->bed) {
+		int tlen;
+		const char *chr = a->h->target_name[b->core.tid];
+		tlen = bam_cigar2rlen(b->core.n_cigar, bam_get_cigar(b));
+		if (!bed_overlap(a->bed, chr, b->core.pos, b->core.pos + tlen))
+			b->core.flag |= BAM_FUNMAP;
+	}
 	return ret;
 }
 
 int main_mapchk(int argc, char *argv[])
 {
-	int c, last_tid = -1, tid, pos, ref_len = 0, max_len = 0, max_alloc = 0, qthres = 20, n_plp;
+	int c, last_tid = -1, tid, pos, ref_len = 0, max_len = 0, max_alloc = 0, qthres = 20, min_sys_dp = 0, n_plp;
 	double fthres = 0.35;
 	const bam_pileup1_t *plp;
 	bam_mplp_t mplp;
 	char *ref = 0, *reg = 0;
 	faidx_t *fai;
 	bam_hdr_t *h;
-	aux_t aux = {0,0}, *auxp = &aux;
+	aux_t aux = {0,0,0,0}, *auxp = &aux;
 	errstat_t all, *e = 0;
 
-	while ((c = getopt(argc, argv, "r:q:f:")) >= 0) {
+	while ((c = getopt(argc, argv, "r:q:f:b:d:")) >= 0) {
 		if (c == 'r') reg = optarg;
 		else if (c == 'q') qthres = atoi(optarg);
 		else if (c == 'f') fthres = atof(optarg);
+		else if (c == 'b') aux.bed = bed_read(optarg);
+		else if (c == 'd') min_sys_dp = atoi(optarg);
 	}
 	if (optind + 2 > argc) {
 		fprintf(stderr, "\n");
@@ -105,12 +120,14 @@ int main_mapchk(int argc, char *argv[])
 		fprintf(stderr, "Options: -r STR       region [null]\n");
 		fprintf(stderr, "         -q INT       threshold for HIGH quality [%d]\n", qthres);
 		fprintf(stderr, "         -f FLOAT     skip sites with excessive non-ref bases [%.2f]\n", fthres);
+		fprintf(stderr, "         -b FILE      BED file to include []\n");
+		fprintf(stderr, "         -d INT       min non-ref count [0]\n");
 		fprintf(stderr, "\n");
 		return 1;
 	}
 	aux.fp = bgzf_open(argv[optind], "r");
 	fai = fai_load(argv[optind+1]);
-	h = bam_hdr_read(aux.fp);
+	aux.h = h = bam_hdr_read(aux.fp);
 	if (reg) {
 		hts_idx_t *idx;
 		idx = bam_index_load(argv[optind]);
@@ -121,6 +138,7 @@ int main_mapchk(int argc, char *argv[])
 	while (bam_mplp_auto(mplp, &tid, &pos, &n_plp, &plp) > 0) {
 		int i, r[2], n_var, n_high;
 		if (n_plp == 0) continue;
+		if (aux.bed && !bed_overlap(aux.bed, h->target_name[tid], pos, pos + 1)) continue;
 		// get the reference sequence
 		if (tid != last_tid) {
 			free(ref);
@@ -171,6 +189,7 @@ int main_mapchk(int argc, char *argv[])
 	free(ref);
 	fai_destroy(fai);
 	bgzf_close(aux.fp);
+	if (aux.bed) bed_destroy(aux.bed);
 
 	memset(&all, 0, sizeof(errstat_t));
 	{
