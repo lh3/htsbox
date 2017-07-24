@@ -136,7 +136,7 @@ int main_mapchk(int argc, char *argv[])
 	}
 	mplp = bam_mplp_init(1, read1_plp, (void**)&auxp);
 	while (bam_mplp_auto(mplp, &tid, &pos, &n_plp, &plp) > 0) {
-		int i, r[2], n_var, n_high;
+		int i, r[2], n_var, n_high, cnt_high[8];
 		if (n_plp == 0) continue;
 		if (aux.bed && !bed_overlap(aux.bed, h->target_name[tid], pos, pos + 1)) continue;
 		// get the reference sequence
@@ -150,13 +150,20 @@ int main_mapchk(int argc, char *argv[])
 		r[0] = ref[pos], r[1] = 3 - r[0];
 		if (r[0] >= 4) continue; // ignore the rest if the reference base is "N"
 		// compute n_var
+		memset(cnt_high, 0, 8 * sizeof(int));
 		for (i = n_var = n_high = 0; i < n_plp; ++i) {
 			bam_pileup1_t *p = (bam_pileup1_t*)&plp[i];
 			const uint8_t *seq = bam_get_seq(p->b), *qual = seq + ((p->b->core.l_qseq + 1) >> 1);
 			int b = seq_nt16to4_table[bam_seqi(seq, p->qpos)], q = qual[p->qpos];
+			if (p->is_del) continue;
 			p->aux = b<<8 | q; // cache the base and the quality
-			if (q >= qthres) ++n_high;
-			if (q >= qthres && (p->indel != 0 || b != r[0])) ++n_var;
+			if (q >= qthres) {
+				++n_high;
+				++cnt_high[b];
+				if (p->indel > 0) ++cnt_high[5];
+				else if (p->indel < 0) ++cnt_high[6];
+				if (p->indel != 0 || b != r[0]) ++n_var;
+			}
 		}
 		if (n_high >= 3 && (double)n_var / n_high > fthres) continue;
 		// expand $e when necessary
@@ -172,15 +179,15 @@ int main_mapchk(int argc, char *argv[])
 		// fill $e
 		for (i = 0; i < n_plp; ++i) {
 			const bam_pileup1_t *p = &plp[i];
-			int x = p->qpos, b = p->aux>>8, q = p->aux&0xff, is_rev = !!bam_is_rev(p->b);
+			int x = p->qpos, b = p->aux>>8, b0 = b, q = p->aux&0xff, is_rev = !!bam_is_rev(p->b);
 			if (p->is_del) continue;
 			if (is_rev) {
 				x = p->b->core.l_qseq - 1 - p->qpos;
 				b = b < 4? 3 - b : 4;
 			}
-			++e[x].q[q][b][r[is_rev]];
-			if (p->indel > 0) ++e[x].q[q][b][5];
-			if (p->indel < 0) ++e[x].q[q][b][6];
+			if (cnt_high[b0] >= min_sys_dp) ++e[x].q[q][b][r[is_rev]];
+			if (p->indel > 0 && cnt_high[5] >= min_sys_dp) ++e[x].q[q][b][5];
+			if (p->indel < 0 && cnt_high[6] >= min_sys_dp) ++e[x].q[q][b][6];
 		}
 	}
 	bam_mplp_destroy(mplp);
