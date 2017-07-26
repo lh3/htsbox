@@ -1,1 +1,1 @@
-#define HTSBOX_VERSION "r339"
+#define HTSBOX_VERSION "r340"

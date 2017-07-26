@@ -97,7 +97,7 @@ static int read1_plp(void *data, bam1_t *b)
 
 int main_mapchk(int argc, char *argv[])
 {
-	int c, last_tid = -1, tid, pos, ref_len = 0, max_len = 0, max_alloc = 0, qthres = 20, min_sys_dp = 0, n_plp;
+	int c, last_tid = -1, tid, pos, ref_len = 0, max_len = 0, max_alloc = 0, qthres = 20, min_sys_dp = 0, n_plp, excl_flag = 0;
 	double fthres = 0.35;
 	const bam_pileup1_t *plp;
 	bam_mplp_t mplp;
@@ -107,12 +107,14 @@ int main_mapchk(int argc, char *argv[])
 	aux_t aux = {0,0,0,0}, *auxp = &aux;
 	errstat_t all, *e = 0;
 
-	while ((c = getopt(argc, argv, "r:q:f:b:d:")) >= 0) {
+	while ((c = getopt(argc, argv, "r:q:f:b:d:12")) >= 0) {
 		if (c == 'r') reg = optarg;
 		else if (c == 'q') qthres = atoi(optarg);
 		else if (c == 'f') fthres = atof(optarg);
 		else if (c == 'b') aux.bed = bed_read(optarg);
 		else if (c == 'd') min_sys_dp = atoi(optarg);
+		else if (c == '1') excl_flag |= 0x40;
+		else if (c == '2') excl_flag |= 0x80;
 	}
 	if (optind + 2 > argc) {
 		fprintf(stderr, "\n");
@@ -122,6 +124,8 @@ int main_mapchk(int argc, char *argv[])
 		fprintf(stderr, "         -f FLOAT     skip sites with excessive non-ref bases [%.2f]\n", fthres);
 		fprintf(stderr, "         -b FILE      BED file to include []\n");
 		fprintf(stderr, "         -d INT       min non-ref count [0]\n");
+		fprintf(stderr, "         -1           exclude read1\n");
+		fprintf(stderr, "         -2           exclude read2\n");
 		fprintf(stderr, "\n");
 		return 1;
 	}
@@ -181,6 +185,7 @@ int main_mapchk(int argc, char *argv[])
 			const bam_pileup1_t *p = &plp[i];
 			int x = p->qpos, b = p->aux>>8, b0 = b, q = p->aux&0xff, is_rev = !!bam_is_rev(p->b);
 			if (p->is_del) continue;
+			if (p->b->core.flag & excl_flag) continue;
 			if (is_rev) {
 				x = p->b->core.l_qseq - 1 - p->qpos;
 				b = b < 4? 3 - b : 4;

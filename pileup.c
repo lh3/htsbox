@@ -216,7 +216,7 @@ static void write_fa(paux_t *a, const char *name, int beg, float max_dev, int l_
 int main_pileup(int argc, char *argv[])
 {
 	int i, j, n, tid, beg, end, pos, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_support = 1, min_supp_len = 0;
-	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0, majority_fa = 0, rand_fa = 0, trim_len = 0, char_x = 'X';
+	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0, majority_fa = 0, rand_fa = 0, trim_len = 0, char_x = 0;
 	int last_tid, last_pos;
 	float max_dev = 3.0, div_coef = 1.;
 	const bam_pileup1_t **plp;
@@ -293,7 +293,7 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "         -F         output the consensus in FASTA\n");
 		fprintf(stderr, "         -M         majority-allele FASTA (majfa; force -F)\n");
 		fprintf(stderr, "         -R         random-allele FASTA (randfa; force -F)\n");
-		fprintf(stderr, "         -x CHAR    character for bases identical to the reference [%c]\n", char_x);
+		fprintf(stderr, "         -x CHAR    character for bases identical to the reference [ref]\n");
 		fprintf(stderr, "         -D FLOAT   soft mask if sumQ > avgSum+FLOAT*sqrt(avgSum) (force -F) [%.2f]\n", max_dev);
 		fprintf(stderr, "\n");
 		fprintf(stderr, "         -u         unitig calling mode (-d -V.01 -S300 -q20 -Q3 -s5)\n");
@@ -465,7 +465,7 @@ int main_pileup(int argc, char *argv[])
 					for (i = c = 0; i < aux.n_a; ++i) c |= a[i].b;
 				}
 				for (i = 0; i < aux.n_a; ++i) sum_dp += qual_as_depth? a[i].q : 1;
-				c = (r == 1 || r == 2 || r == 4 || r == 8) && c == r? char_x : seq_nt16_str[c];
+				c = (r == 1 || r == 2 || r == 4 || r == 8) && c == r && char_x != 0? char_x : seq_nt16_str[c];
 				if (is_ambi) c = tolower(c);
 				aux.seq[pos - beg] = c;
 				aux.depth[pos - beg] = sum_dp;
