@@ -402,6 +402,11 @@ int bam_read1(BGZF *fp, bam1_t *b)
     c->l_qseq = x[4];
     c->mtid = x[5]; c->mpos = x[6]; c->isize = x[7];
     b->l_data = block_len - 32 + c->l_extranul;
+    if (c->flag & 0x8000) { // >65535 CIGAR operations
+        c->flag ^= 0x8000; // clear the flag
+        c->n_cigar |= (uint32_t)c->bin << 16;
+        c->bin = 0;
+    }
     if (b->l_data < 0 || c->l_qseq < 0 || c->l_qname < 1) return -4;
     if (((uint64_t) c->n_cigar << 2) + c->l_qname + c->l_extranul
         + (((uint64_t) c->l_qseq + 1) >> 1) + c->l_qseq > (uint64_t) b->l_data)
@@ -424,6 +429,9 @@ int bam_read1(BGZF *fp, bam1_t *b)
         return -4;
     if (fp->is_be) swap_data(c, b->l_data, b->data, 0);
 
+    if (c->n_cigar > 0xffff && c->pos >= 0) // recalculate bin, in case it is needed by 3rd-party tools
+        c->bin = hts_reg2bin(c->pos, c->pos + bam_cigar2rlen(c->n_cigar, bam_get_cigar(b)), 14, 5);
+
     // Sanity check for broken CIGAR alignments
     if (c->n_cigar > 0 && c->l_qseq > 0 && !(c->flag & BAM_FUNMAP)
         && bam_cigar2qlen(c->n_cigar, bam_get_cigar(b)) != c->l_qseq) {
@@ -440,15 +448,15 @@ int bam_write1(BGZF *fp, const bam1_t *b)
     const bam1_core_t *c = &b->core;
     uint32_t x[8], block_len = b->l_data - c->l_extranul + 32, y;
     int i, ok;
-    if (c->n_cigar >= 65536) {
-        hts_log_error("Too many CIGAR operations (%d >= 64K for QNAME \"%s\")", c->n_cigar, bam_get_qname(b));
-        errno = EOVERFLOW;
-        return -1;
-    }
     x[0] = c->tid;
     x[1] = c->pos;
-    x[2] = (uint32_t)c->bin<<16 | c->qual<<8 | (c->l_qname - c->l_extranul);
-    x[3] = (uint32_t)c->flag<<16 | c->n_cigar;
+    if (c->n_cigar <= 0xffff) {
+        x[2] = (uint32_t)c->bin<<16 | c->qual<<8 | (c->l_qname - c->l_extranul);
+        x[3] = (uint32_t)c->flag<<16 | c->n_cigar;
+    } else {
+        x[2] = (uint32_t)(c->n_cigar & 0xffff0000U) | c->qual<<8 | c->l_qname;
+        x[3] = (uint32_t)(c->flag | 0x8000) << 16 | (c->n_cigar & 0xffff);
+    }
     x[4] = c->l_qseq;
     x[5] = c->mtid;
     x[6] = c->mpos;
