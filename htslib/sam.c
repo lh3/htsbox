@@ -242,29 +242,19 @@ static inline uint32_t le_to_u32(const uint8_t *buf)
 
 int bam_tag2cigar(bam1_t *b)
 {
-	static const int fake_len = 2, fake_bytes = fake_len * 4;
 	bam1_core_t *c = &b->core;
-	uint32_t cigar_st, n_cigar4, CG_st, CG_en, ori_len = b->l_data, *cigar0, k, CG_len, ref_len;
+	uint32_t cigar_st, n_cigar4, CG_st, CG_en, ori_len = b->l_data, *cigar0, CG_len, fake_bytes;
 	uint8_t *CG;
 
 	// test where there is a real CIGAR in the CG tag to move
-	if (c->n_cigar != fake_len || c->tid < 0 || c->pos < 0) return 0;
+	if (c->n_cigar == 0 || c->tid < 0 || c->pos < 0) return 0;
 	cigar0 = bam_get_cigar(b);
 	if (bam_cigar_op(cigar0[0]) != BAM_CSOFT_CLIP || bam_cigar_oplen(cigar0[0]) != c->l_qseq) return 0;
-	if (bam_cigar_op(cigar0[1]) != BAM_CREF_SKIP) return 0;
+	fake_bytes = c->n_cigar * 4;
 	if ((CG = bam_aux_get(b, "CG")) == 0) return 0; // no CG tag
 	if (CG[0] != 'B' || CG[1] != 'I') return 0; // not of type B,I
 	CG_len = le_to_u32(CG + 2);
 	if (CG_len == 0) return 0; // nothing to move
-
-	// test reference length in the real CIGAR
-	for (k = 0, ref_len = 0; k < CG_len; ++k) {
-		uint32_t c;
-		c = le_to_u32(CG + 6 + k * 4);
-		if (bam_cigar_type(bam_cigar_op(c))&2)
-			ref_len += bam_cigar_oplen(c);
-	}
-	if (ref_len != bam_cigar_oplen(cigar0[1])) return 0;
 
 	// move from the CG tag to the right position
 	cigar_st = (uint8_t*)cigar0 - b->data;
@@ -283,6 +273,7 @@ int bam_tag2cigar(bam1_t *b)
 	if (ori_len > CG_en) // move data after the CG tag
 		memmove(b->data + CG_st + n_cigar4 - fake_bytes, b->data + CG_en + n_cigar4 - fake_bytes, ori_len - CG_en);
 	b->l_data -= n_cigar4 + 8; // 8: CGBI (4 bytes) and CGBI length (4)
+	b->core.bin = hts_reg2bin(b->core.pos, b->core.pos + bam_cigar2rlen(b->core.n_cigar, bam_get_cigar(b)), 14, 5);
 	return 1;
 }
 
