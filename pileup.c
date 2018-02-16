@@ -85,7 +85,7 @@ static int read_bam(void *data, bam1_t *b) // read level filters better go here 
 }
 
 typedef struct {
-	uint32_t is_skip:1, is_rev:1, b:4, q:8, k:18; // b=base, q=quality, k=allele id
+	uint32_t is_skip:1, is_rev:1, b:4, q:8, is_del:1, k:17; // b=base, q=quality, k=allele id
 	int indel; // <0: deleteion; >0: insertion
 	uint64_t hash;
 	uint64_t pos; // i<<32|j: j-th read of the i-th sample
@@ -94,32 +94,43 @@ typedef struct {
 #define allele_lt(a, b) ((a).hash < (b).hash || ((a).hash == (b).hash && (a).indel < (b).indel))
 KSORT_INIT(allele, allele_t, allele_lt)
 
-static inline allele_t pileup2allele(const bam_pileup1_t *p, int min_baseQ, uint64_t pos, int ref, int trim_len)
+static inline allele_t pileup2allele(const bam_pileup1_t *p, int min_baseQ, uint64_t pos, int ref, int trim_len, int del_as_allele)
 { // collect allele information given a pileup1 record
 	allele_t a;
 	int i;
 	const uint8_t *seq = bam_get_seq(p->b);
-	a.k = (1<<18)-1; // this will be set in count_alleles()
+	a.k = (1<<17) - 1; // this will be set in count_alleles()
 	a.q = bam_get_qual(p->b)[p->qpos];
 	a.is_rev = bam_is_rev(p->b);
-	a.is_skip = (p->is_del || p->is_refskip || a.q < min_baseQ);
+	if (del_as_allele) {
+		a.is_skip = (p->is_refskip || a.q < min_baseQ);
+		a.is_del = p->is_del;
+	} else {
+		a.is_skip = (p->is_del || p->is_refskip || a.q < min_baseQ);
+		a.is_del = 0;
+	}
 	if (p->qpos < trim_len || p->b->core.l_qseq - p->qpos < trim_len) a.is_skip = 1;
 	a.indel = p->indel;
 	a.b = a.hash = bam_seqi(seq, p->qpos);
 	a.pos = pos;
-	if (p->indel > 0) // compute the hash for the insertion
+	if (a.is_del) a.hash = (uint64_t)-1;
+	else if (p->indel > 0) // compute the hash for the insertion
 		for (i = 0; i < p->indel; ++i)
 			a.hash = (a.hash<<4) + a.hash + bam_seqi(seq, p->qpos + i + 1);
 	a.hash = a.hash << 1 >> 1;
-	if (p->indel != 0 || a.b != ref || ref == 15) // the highest bit tells whether it is a reference allele or not
+	if (p->indel != 0 || a.b != ref || ref == 15 || a.is_del) // the highest bit tells whether it is a reference allele or not
 		a.hash |= 1ULL<<63;
 	return a;
 }
 
-static inline void print_allele(const bam_pileup1_t *p, int l_ref, const char *ref, int pos, int max_del, int is_vcf)
+static inline void print_allele(const bam_pileup1_t *p, int l_ref, const char *ref, int pos, int max_del, int is_vcf, int del_as_allele)
 { // print the allele. The format depends on is_vcf.
 	const uint8_t *seq = bam_get_seq(p->b);
 	int i, rest = max_del;
+	if (del_as_allele && p->is_del) {
+		putchar('*');
+		return;
+	}
 	putchar(seq_nt16_str[bam_seqi(seq, p->qpos)]);
 	if (p->indel > 0) {
 		if (!is_vcf) printf("+%d", p->indel);
@@ -216,7 +227,7 @@ static void write_fa(paux_t *a, const char *name, int beg, float max_dev, int l_
 int main_pileup(int argc, char *argv[])
 {
 	int i, j, n, tid, beg, end, pos, *n_plp, baseQ = 0, mapQ = 0, min_len = 0, l_ref = 0, min_support = 1, min_supp_len = 0;
-	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0, majority_fa = 0, rand_fa = 0, trim_len = 0, char_x = 0;
+	int qual_as_depth = 0, is_vcf = 0, var_only = 0, show_2strand = 0, is_fa = 0, majority_fa = 0, rand_fa = 0, trim_len = 0, char_x = 0, del_as_allele = 0;
 	int last_tid, last_pos;
 	float max_dev = 3.0, div_coef = 1.;
 	const bam_pileup1_t **plp;
@@ -230,7 +241,7 @@ int main_pileup(int argc, char *argv[])
 	void *bed = 0;
 
 	// parse the command line
-	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:uRMb:T:x:")) >= 0) {
+	while ((n = getopt(argc, argv, "r:q:Q:l:f:dvcCS:Fs:D:V:uRMb:T:x:e")) >= 0) {
 		if (n == 'f') { fname = optarg; fai = fai_load(fname); }
 		else if (n == 'b') bed = bed_read(optarg);
 		else if (n == 'l') min_len = atoi(optarg); // minimum query length
@@ -250,6 +261,7 @@ int main_pileup(int argc, char *argv[])
 		else if (n == 'R') rand_fa = is_fa = 1;
 		else if (n == 'T') trim_len = atoi(optarg);
 		else if (n == 'x') char_x = toupper(*optarg);
+		else if (n == 'e') del_as_allele = 1;
 		else if (n == 'u') {
 			baseQ = 3; mapQ = 20; qual_as_depth = 1;
 			min_supp_len = 300; min_support = 5; div_coef = .01;
@@ -285,6 +297,7 @@ int main_pileup(int argc, char *argv[])
 		fprintf(stderr, "         -T INT     ignore bases within INT-bp from either end of a read [0]\n");
 		fprintf(stderr, "         -d         base quality as depth\n");
 		fprintf(stderr, "         -s INT     drop alleles with depth<INT [%d]\n", min_support);
+		fprintf(stderr, "         -e         use '*' to mark deleted bases\n");
 		fprintf(stderr, "\n");
 		fprintf(stderr, "         -v         show variants only\n");
 		fprintf(stderr, "         -c         output in the VCF format (force -v)\n");
@@ -349,7 +362,7 @@ int main_pileup(int argc, char *argv[])
 	plp = (const bam_pileup1_t**)calloc(n, sizeof(const bam_pileup1_t*)); // plp[i] points to the array of covering reads (internal in mplp)
 	memset(&aux, 0, sizeof(paux_t));
 	if (is_vcf) {
-		puts("##fileformat=VCFv4.1");
+		puts("##fileformat=VCFv4.2");
 		printf("##source=htsbox-pileup-%s\n", HTSBOX_VERSION);
 		if (fai) {
 			printf("##reference=%s\n", fname);
@@ -395,7 +408,7 @@ int main_pileup(int argc, char *argv[])
 			r = (ref && pos - beg < l_ref)? seq_nt16_table[(int)ref[pos - beg]] : 15; // the reference allele
 			for (i = aux.n_a = 0; i < n; ++i)
 				for (j = 0; j < n_plp[i]; ++j) {
-					a[aux.n_a] = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j, r, trim_len);
+					a[aux.n_a] = pileup2allele(&plp[i][j], baseQ, (uint64_t)i<<32 | j, r, trim_len, del_as_allele);
 					if (!a[aux.n_a].is_skip) ++aux.n_a;
 				}
 			if (aux.n_a == 0) continue; // no reads are good enough; zero effective coverage
@@ -413,6 +426,13 @@ int main_pileup(int argc, char *argv[])
 			}
 
 			if (var_only && aux.n_alleles == 1 && a[0].hash>>63 == 0) continue; // var_only mode, but no ALT allele; skip
+			if (var_only && aux.n_alleles <= 2 && del_as_allele) {
+				int n_ref = 0, n_del = 0;
+				for (i = 0; i < aux.n_a; ++i)
+					if (a[i].is_del) ++n_del;
+					else if (a[i].hash>>63 == 0) ++n_ref;
+				if (n_ref + n_del == aux.n_a) continue;
+			}
 			if (is_fa) { // FASTA output
 				int del_supp, c, is_ambi = 0, sum_dp = 0;
 				if (pos - beg >= aux.max_len) { // expand arrays
@@ -480,12 +500,12 @@ int main_pileup(int argc, char *argv[])
 				} else printf("\t%c\t", ref && pos < l_ref + beg? ref[pos - beg] : 'N'); // print a single reference base
 				// print alleles
 				if (!is_vcf || a[0].hash>>63) { // print if there is no reference allele
-					print_allele(&plp[a[0].pos>>32][(uint32_t)a[0].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf);
+					print_allele(&plp[a[0].pos>>32][(uint32_t)a[0].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf, del_as_allele);
 					if (aux.n_alleles > 1) putchar(',');
 				}
 				for (i = k = 1; i < aux.n_a; ++i)
 					if (a[i].indel != a[i-1].indel || a[i].hash != a[i-1].hash) {
-						print_allele(&plp[a[i].pos>>32][(uint32_t)a[i].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf);
+						print_allele(&plp[a[i].pos>>32][(uint32_t)a[i].pos], l_ref, ref, pos - beg, aux.max_del, is_vcf, del_as_allele);
 						if (++k != aux.n_alleles) putchar(',');
 					}
 				if (is_vcf && aux.n_alleles == 1 && a[0].hash>>63 == 0) putchar('.'); // print placeholder if there is only the reference allele
