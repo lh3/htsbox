@@ -258,9 +258,14 @@ static void update_loff(hts_idx_t *idx, int i, int free_lidx)
 		if (lidx->offset[l] == (uint64_t)-1)
 			lidx->offset[l] = lidx->offset[l-1];
 	if (bidx == 0) return;
-	for (k = kh_begin(bidx); k != kh_end(bidx); ++k) // set loff
-		if (kh_exist(bidx, k))
-			kh_val(bidx, k).loff = kh_key(bidx, k) < idx->n_bins? lidx->offset[hts_bin_bot(kh_key(bidx, k), idx->n_lvls)] : 0;
+	for (k = kh_begin(bidx); k != kh_end(bidx); ++k) { // set loff
+		if (kh_exist(bidx, k)) {
+			if (kh_key(bidx, k) < idx->n_bins) {
+				int bot_bin = hts_bin_bot(kh_key(bidx, k), idx->n_lvls);
+				kh_val(bidx, k).loff = bot_bin < lidx->n? lidx->offset[bot_bin] : 0;
+			} else kh_val(bidx, k).loff = 0;
+		}
+	}
 	if (free_lidx) {
 		free(lidx->offset);
 		lidx->m = lidx->n = 0;
@@ -343,9 +348,7 @@ int hts_idx_push(hts_idx_t *idx, int tid, int beg, int end, uint64_t offset, int
 		memset(&idx->lidx[oldm], 0, (idx->m - oldm) * sizeof(lidx_t));
 	}
 	if (idx->n < tid + 1) idx->n = tid + 1;
-	if (tid < 0) ++idx->n_no_coor;
 	if (idx->z.finished) return 0;
-	if (idx->bidx[tid] == 0) idx->bidx[tid] = kh_init(bin);
 	if (idx->z.last_tid < tid || (idx->z.last_tid >= 0 && tid < 0)) { // change of chromosome
 		idx->z.last_tid = tid;
 		idx->z.last_bin = 0xffffffffu;
@@ -356,8 +359,14 @@ int hts_idx_push(hts_idx_t *idx, int tid, int beg, int end, uint64_t offset, int
 		if (hts_verbose >= 1) fprintf(stderr, "[E::%s] unsorted positions\n", __func__);
 		return -1;
 	}
-	if (tid >= 0 && is_mapped)
-		insert_to_l(&idx->lidx[tid], beg, end, idx->z.last_off, idx->min_shift); // last_off points to the start of the current record
+	if (tid >= 0) {
+		if (idx->bidx[tid] == 0) idx->bidx[tid] = kh_init(bin);
+		if (is_mapped) {
+			if (beg < 0) beg = 0; // shoehorn [-1,0) into the leftmost bottom-level bin
+			if (end <= 0) end = 1;
+			insert_to_l(&idx->lidx[tid], beg, end, idx->z.last_off, idx->min_shift); // last_off points to the start of the current record
+		}
+	} else ++idx->n_no_coor;
 	bin = hts_reg2bin(beg, end, idx->min_shift, idx->n_lvls);
 	if ((int)idx->z.last_bin != bin) { // then possibly write the binning index
 		if (idx->z.save_bin != 0xffffffffu) // save_bin==0xffffffffu only happens to the first record
