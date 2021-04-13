@@ -375,9 +375,9 @@ int main_pileup(int argc, char *argv[])
 		}
 		puts("##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">");
 		if (show_2strand) {
-			puts("##FORMAT=<ID=ADF,Number=R,Type=Integer,Description=\"Allelic depths on the forward strand\">");
-			puts("##FORMAT=<ID=ADR,Number=R,Type=Integer,Description=\"Allelic depths on the reverse strand\">");
-		} else puts("##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"Allelic depths for the ref and alt alleles in the order listed\">");
+			puts("##FORMAT=<ID=ADF,Number=1,Type=Integer,Description=\"Allelic depths on the forward strand\">");
+			puts("##FORMAT=<ID=ADR,Number=1,Type=Integer,Description=\"Allelic depths on the reverse strand\">");
+		} else puts("##FORMAT=<ID=AD,Number=2,Type=Integer,Description=\"Allelic depths for the ref and alt alleles in the order listed\">");
 		fputs("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT", stdout);
 		for (i = 0; i < n; ++i) printf("\t%s", argv[optind+i]);
 		putchar('\n');
