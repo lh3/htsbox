@@ -162,7 +162,7 @@ static void mark_poor(bam1_t *b, double drop_coef)
 		b->core.flag |= 0x204;
 }
 
-static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b, double drop_coef, const void *bed)
+static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *h, bam1_t *b, double drop_coef, int min_len, const void *bed)
 {
 	if (!(flag&4)) {
 		if (bed) {
@@ -192,6 +192,11 @@ static void print_line(int flag, htsFile *out, kstring_t *buf, const bam_hdr_t *
 				bam_aux_del(b, OQ);
 			}
 		}
+		if (min_len > 0) {
+			int qlen;
+			qlen = bam_cigar2qlen(b->core.n_cigar, bam_get_cigar(b));
+			if (qlen < min_len) return;
+		}
 		sam_write1(out, h, b);
 	} else print_pas(h, b, buf);
 }
@@ -200,7 +205,7 @@ int main_samview(int argc, char *argv[])
 {
 	samFile *in;
 	char *fn_ref = 0;
-	int flag = 0, c, clevel = -1, ignore_sam_err = 0;
+	int flag = 0, c, clevel = -1, ignore_sam_err = 0, min_len = 0;
 	char moder[8];
 	double drop_coef = 1.;
 	void *bed = 0;
@@ -208,12 +213,13 @@ int main_samview(int argc, char *argv[])
 	bam_hdr_t *h;
 	bam1_t *b;
 
-	while ((c = getopt(argc, argv, "OIbpSl:t:UL:d:e:")) >= 0) {
+	while ((c = getopt(argc, argv, "OIbpSl:t:UL:d:e:m:")) >= 0) {
 		switch (c) {
 		case 'S': flag |= 1; break;
 		case 'b': flag |= 2; break;
 		case 'p': flag |= 4; break;
 		case 'O': flag |= 8; break;
+		case 'm': min_len = atof(optarg); break;
 		case 'e': drop_coef = atof(optarg); break;
 		case 'l': clevel = atoi(optarg); flag |= 2; break;
 		case 't': fn_ref = optarg; break;
@@ -222,7 +228,7 @@ int main_samview(int argc, char *argv[])
 		}
 	}
 	if (argc == optind) {
-		fprintf(stderr, "Usage: samview [-bSIpO] [-L reg.bed] [-l level] [-e dropRate] <in.bam>|<in.sam> [region]\n");
+		fprintf(stderr, "Usage: samview [-bSIpO] [-L reg.bed] [-l level] [-e dropRate] [-m minLen] <in.bam>|<in.sam> [region]\n");
 		return 1;
 	}
 	strcpy(moder, "r");
@@ -261,13 +267,13 @@ int main_samview(int argc, char *argv[])
 					continue;
 				}
 				while (bam_itr_next((BGZF*)in->fp, iter, b) >= 0)
-					print_line(flag, out, &buf, h, b, drop_coef, bed);
+					print_line(flag, out, &buf, h, b, drop_coef, min_len, bed);
 				hts_itr_destroy(iter);
 			}
 			hts_idx_destroy(idx);
 		} else {
 			while (sam_read1(in, h, b) >= 0)
-				print_line(flag, out, &buf, h, b, drop_coef, bed);
+				print_line(flag, out, &buf, h, b, drop_coef, min_len, bed);
 		}
 		if (out) sam_close(out);
 	}
