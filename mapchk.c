@@ -97,7 +97,7 @@ static int read1_plp(void *data, bam1_t *b)
 
 int main_mapchk(int argc, char *argv[])
 {
-	int c, last_tid = -1, tid, pos, ref_len = 0, max_len = 0, max_alloc = 0, qthres = 20, min_sys_dp = 0, n_plp, excl_flag = 0;
+	int c, last_tid = -1, tid, pos, ref_len = 0, max_len = 0, max_alloc = 0, qthres = 20, min_sys_dp = 0, no_hp_q = 0, n_plp, excl_flag = 0;
 	double fthres = 0.35;
 	const bam_pileup1_t *plp;
 	bam_mplp_t mplp;
@@ -107,7 +107,7 @@ int main_mapchk(int argc, char *argv[])
 	aux_t aux = {0,0,0,0}, *auxp = &aux;
 	errstat_t all, *e = 0;
 
-	while ((c = getopt(argc, argv, "r:q:f:b:d:12")) >= 0) {
+	while ((c = getopt(argc, argv, "r:q:f:b:d:12H")) >= 0) {
 		if (c == 'r') reg = optarg;
 		else if (c == 'q') qthres = atoi(optarg);
 		else if (c == 'f') fthres = atof(optarg);
@@ -115,6 +115,7 @@ int main_mapchk(int argc, char *argv[])
 		else if (c == 'd') min_sys_dp = atoi(optarg);
 		else if (c == '1') excl_flag |= 0x40;
 		else if (c == '2') excl_flag |= 0x80;
+		else if (c == 'H') no_hp_q = 1;
 	}
 	if (optind + 2 > argc) {
 		fprintf(stderr, "\n");
@@ -126,6 +127,7 @@ int main_mapchk(int argc, char *argv[])
 		fprintf(stderr, "         -d INT       min non-ref count [0]\n");
 		fprintf(stderr, "         -1           exclude read1\n");
 		fprintf(stderr, "         -2           exclude read2\n");
+		fprintf(stderr, "         -H           disable 1bp homopolymer baseQ adjustment\n");
 		fprintf(stderr, "\n");
 		return 1;
 	}
@@ -158,15 +160,30 @@ int main_mapchk(int argc, char *argv[])
 		for (i = n_var = n_high = 0; i < n_plp; ++i) {
 			bam_pileup1_t *p = (bam_pileup1_t*)&plp[i];
 			const uint8_t *seq = bam_get_seq(p->b), *qual = seq + ((p->b->core.l_qseq + 1) >> 1);
-			int b = seq_nt16to4_table[bam_seqi(seq, p->qpos)], q = qual[p->qpos];
+			int j, b = seq_nt16to4_table[bam_seqi(seq, p->qpos)], q = qual[p->qpos], q_ins = 0xff;
 			if (p->is_del) continue;
-			p->aux = b<<8 | q; // cache the base and the quality
-			if (q >= qthres) {
+			if (!no_hp_q && p->indel == 1 && p->qpos + 1 < p->b->core.l_qseq) { // TODO: this assumes left-alignment; also, extend to STRs, not limited to HP
+				int bi = seq_nt16to4_table[bam_seqi(seq, p->qpos + 1)];
+				for (j = p->qpos + 1; j < p->b->core.l_qseq; ++j) {
+					int bj = seq_nt16to4_table[bam_seqi(seq, j)];
+					if (bj != bi) break;
+					q_ins = q_ins < qual[j]? q_ins : qual[j];
+				}
+				//fprintf(stderr, "%s\t%d\t%d\n", bam_get_qname(p->b), q, q_ins);
+			} else if (p->indel > 0) {
+				for (j = 0; j < p->indel && p->qpos + j + 1 < p->b->core.l_qseq; ++j)
+					q_ins = q_ins < qual[p->qpos + j + 1]? q_ins : qual[p->qpos + j + 1];
+			}
+			p->aux = b<<16 | q<<8 | q_ins; // cache the base and the quality
+			if (p->indel <= 0 && q >= qthres) { // SNP or deletion
 				++n_high;
 				++cnt_high[b];
-				if (p->indel > 0) ++cnt_high[5];
-				else if (p->indel < 0) ++cnt_high[6];
+				if (p->indel < 0) ++cnt_high[6];
 				if (p->indel != 0 || b != r[0]) ++n_var;
+			} else if (p->indel > 0 && q_ins >= qthres) { // insertion
+				++n_high;
+				++cnt_high[b];
+				++cnt_high[5];
 			}
 		}
 		if (n_high >= 3 && (double)n_var / n_high > fthres) continue;
@@ -183,7 +200,7 @@ int main_mapchk(int argc, char *argv[])
 		// fill $e
 		for (i = 0; i < n_plp; ++i) {
 			const bam_pileup1_t *p = &plp[i];
-			int x = p->qpos, b = p->aux>>8, b0 = b, q = p->aux&0xff, is_rev = !!bam_is_rev(p->b);
+			int x = p->qpos, b = p->aux>>16, b0 = b, q = p->aux>>8&0xff, q_ins = p->aux&0xff, is_rev = !!bam_is_rev(p->b);
 			if (p->is_del) continue;
 			if (p->b->core.flag & excl_flag) continue;
 			if (is_rev) {
@@ -191,7 +208,7 @@ int main_mapchk(int argc, char *argv[])
 				b = b < 4? 3 - b : 4;
 			}
 			if (cnt_high[b0] >= min_sys_dp) ++e[x].q[q][b][r[is_rev]];
-			if (p->indel > 0 && cnt_high[5] >= min_sys_dp) ++e[x].q[q][b][5];
+			if (p->indel > 0 && cnt_high[5] >= min_sys_dp) ++e[x].q[q_ins][b][5];
 			if (p->indel < 0 && cnt_high[6] >= min_sys_dp) ++e[x].q[q][b][6];
 		}
 	}
